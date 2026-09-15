@@ -1,38 +1,85 @@
 import SwiftUI
 
-/// Hover detail. Milestone 1 renders counts only; session rows land in milestone 2.
+/// Hover detail: the full-size stoplight, plus a row per live session.
 struct PopoverView: View {
     let state: LightState
+    let sessions: [Session]
+    let now: Date
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            // The menu bar lamps are ~5px when upright — too small to be the payoff.
-            // This is where the stoplight is actually legible.
+        HStack(alignment: .top, spacing: 14) {
+            // The menu bar lamps are ~5px. This is where the stoplight is legible.
             upright
 
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text(state.summary)
                     .font(.system(size: 13, weight: .semibold))
 
-                ForEach(Lamp.allCases, id: \.self) { lamp in
-                    HStack(spacing: 6) {
-                        Text(lamp.label)
-                            .font(.system(size: 11))
-                            .foregroundStyle(state.count(lamp) > 0 ? .primary : .secondary)
-                        Spacer(minLength: 10)
-                        Text("\(state.count(lamp))")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.secondary)
+                if sessions.isEmpty {
+                    Text("No Claude Code sessions running")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(sessions) { session in
+                            row(for: session)
+                        }
                     }
                 }
             }
-            .frame(width: 150, alignment: .leading)
+            .frame(width: 230, alignment: .leading)
         }
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(.regularMaterial)
         )
+    }
+
+    private func row(for session: Session) -> some View {
+        let bucket = session.bucket(now: now)
+        return HStack(spacing: 7) {
+            Circle()
+                .fill(Color(nsColor: color(for: bucket)))
+                .frame(width: 7, height: 7)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(session.folder)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                Text(detail(for: session, bucket: bucket))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 6)
+
+            if let age = session.age(now: now) {
+                Text(age)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func color(for bucket: Bucket) -> NSColor {
+        switch bucket {
+        case .failed: StoplightIcon.litColor(.red)
+        case .attention: StoplightIcon.litColor(.yellow)
+        case .running: StoplightIcon.litColor(.green)
+        case .idle: StoplightIcon.unlitColor
+        }
+    }
+
+    private func detail(for session: Session, bucket: Bucket) -> String {
+        switch bucket {
+        case .running: "working"
+        case .attention: "waiting for you"
+        case .failed: "failed"
+        case .idle: "idle"
+        }
     }
 
     private var upright: some View {

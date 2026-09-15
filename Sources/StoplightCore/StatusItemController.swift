@@ -30,7 +30,12 @@ public final class StatusItemController: NSObject {
     /// something else doesn't set the whole thing spinning.
     private let hoverIntent: TimeInterval = 0.22
 
-    private var state = LightState(failed: 0, attention: 1, running: 2) {
+    private let watcher = SessionWatcher()
+    /// Fires exactly when the next just-finished session stops counting as
+    /// attention. A one-shot rather than a poll, so idle cost stays at zero.
+    private var decayTask: Task<Void, Never>?
+
+    private var state = LightState() {
         didSet { if state != oldValue { render() } }
     }
 
@@ -49,17 +54,6 @@ public final class StatusItemController: NSObject {
         return panel
     }()
 
-    /// Every lamp permutation worth eyeballing, for milestone 1 verification.
-    private static let demoStates: [LightState] = [
-        LightState(failed: 0, attention: 0, running: 0),
-        LightState(failed: 0, attention: 0, running: 2),
-        LightState(failed: 0, attention: 1, running: 0),
-        LightState(failed: 1, attention: 0, running: 0),
-        LightState(failed: 0, attention: 1, running: 2),
-        LightState(failed: 1, attention: 2, running: 3),
-    ]
-    private var demoIndex = 0
-
     public override init() {
         super.init()
 
@@ -76,7 +70,38 @@ public final class StatusItemController: NSObject {
             Task { @MainActor in self?.render() }
         }
 
+        watcher.onChange = { [weak self] in self?.refreshState() }
+        watcher.start()
+        refreshState()
         render()
+    }
+
+    // MARK: - State
+
+    private func refreshState() {
+        let now = Date()
+        state = LightState(sessions: watcher.sessions, now: now)
+        if hoverPanel.isVisible { layoutHoverPanel() }
+        scheduleAttentionDecay(now: now)
+    }
+
+    /// Attention expires on a clock, not on a filesystem event, so schedule a
+    /// single wake-up for the earliest expiry rather than polling for it.
+    private func scheduleAttentionDecay(now: Date) {
+        decayTask?.cancel()
+        decayTask = nil
+
+        let next = watcher.sessions
+            .compactMap { $0.attentionExpiry() }
+            .filter { $0 > now }
+            .min()
+        guard let next else { return }
+
+        decayTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(next.timeIntervalSinceNow))
+            guard !Task.isCancelled else { return }
+            self?.refreshState()
+        }
     }
 
     // MARK: - Rendering
@@ -125,7 +150,9 @@ public final class StatusItemController: NSObject {
 
     private func layoutHoverPanel() {
         guard let button = statusItem.button, let window = button.window else { return }
-        let host = NSHostingView(rootView: PopoverView(state: state))
+        let host = NSHostingView(rootView: PopoverView(state: state,
+                                                       sessions: watcher.sessions,
+                                                       now: Date()))
         host.layout()
         let size = host.fittingSize
         hoverPanel.contentView = host
@@ -156,11 +183,10 @@ public final class StatusItemController: NSObject {
         menu.addItem(header)
         menu.addItem(.separator())
 
-        let cycle = NSMenuItem(title: "Cycle demo state",
-                               action: #selector(cycleDemoState), keyEquivalent: "d")
-        cycle.target = self
-        menu.addItem(cycle)
-
+        let diagnostics = NSMenuItem(title: watcher.diagnostics.summary,
+                                     action: nil, keyEquivalent: "")
+        diagnostics.isEnabled = false
+        menu.addItem(diagnostics)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Stoplight",
                                 action: #selector(NSApplication.terminate(_:)),
@@ -168,8 +194,4 @@ public final class StatusItemController: NSObject {
         return menu
     }
 
-    @objc private func cycleDemoState() {
-        demoIndex = (demoIndex + 1) % Self.demoStates.count
-        state = Self.demoStates[demoIndex]
-    }
 }

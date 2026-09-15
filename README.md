@@ -23,18 +23,23 @@ opens the menu.
 
 ## Status
 
-**Milestone 1 of 5. The UI works; it is not yet connected to any data.**
+**Milestone 2 of 5. Reads live session state; the red lamp is not wired up yet.**
 
 What works today:
 
-- Menu bar icon, drawn with Core Graphics, adapts to light/dark menu bars
-- Hover → detail panel, after a 0.22s hover-intent delay
-- Click → menu
-- 22 passing tests
+- Live session monitoring via FSEvents on `~/.claude/sessions/`, with dead
+  processes reaped
+- 🟢 green from `status: "busy"`
+- 🟡 yellow from a session that finished within the last 5 minutes, decaying back
+  to dark on a scheduled one-shot rather than a poll
+- Hover panel listing every live session: folder, state and age
+- Diagnostics line in the menu
+- 47 passing tests
 
-What does not exist yet: **any real session monitoring.** The lamp counts are
-hardcoded. Use *Cycle demo state* in the menu to walk the six lamp permutations
-and see how the rendering behaves.
+**The red lamp never lights yet.** Claude Code writes only `busy` and `idle` to
+disk — there is no failure signal there to read. Detecting a crash, an error or a
+hit rate limit needs hook events, which is milestone 3. Until then red stays dark
+rather than being faked from something it does not mean.
 
 ## Requirements
 
@@ -94,9 +99,9 @@ scraping or log tailing involved.
   and timestamps. Watching that one directory with FSEvents gives push-based
   updates and 0% idle CPU. Session files can outlive their process, so entries are
   reaped with `kill(pid, 0)`.
-- **Hooks** (`Notification`, `Stop`, `SessionEnd`) — `status` alone cannot separate
-  "thinking" from "blocked on a permission prompt", which is exactly the
-  green/yellow split. Hooks supply that transition.
+- **Hooks** (`Notification`, `Stop`, `SessionEnd`) — not yet wired up. `status`
+  carries only `busy` and `idle`, so it cannot separate "thinking" from "blocked on
+  a permission prompt", and it reports no failures at all. Hooks supply both.
 - **`~/.claude/projects/<slug>/<sessionId>.jsonl`** — live transcript, for token
   counts and the current tool name. Parsed lazily, only while the panel is open.
 - **`~/.claude/stats-cache.json`** — pre-aggregated daily counts, to backfill the
@@ -153,7 +158,7 @@ relayout and the downscaling blur together.
 ## Roadmap
 
 1. ✅ Menu bar item, drawn lamps, hover/click split
-2. `SessionWatcher` on `~/.claude/sessions/` + liveness reaper → real green/dark
-3. Hooks → yellow and red; install/uninstall flow
-4. Panel detail: session rows, cwd, elapsed, current tool
+2. ✅ `SessionWatcher` on `~/.claude/sessions/` + liveness reaper → real green/yellow
+3. Hooks → red, and yellow while blocked mid-task; install/uninstall flow
+4. Panel detail: current tool, token usage
 5. SQLite scoreboard + `stats-cache.json` backfill
