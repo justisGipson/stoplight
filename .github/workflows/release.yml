@@ -1,0 +1,93 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp into the bundle (e.g. 0.2.0)"
+        required: false
+        default: "0.0.0-dev"
+
+jobs:
+  build:
+    runs-on: macos-15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building $VERSION"
+
+      - name: Stamp the bundle version
+        # Done before build.sh, which copies this plist in and then signs the
+        # bundle — editing the plist afterwards would invalidate that signature.
+        run: |
+          /usr/libexec/PlistBuddy -c \
+            "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" \
+            Resources/Info.plist
+          /usr/libexec/PlistBuddy -c \
+            "Set :CFBundleVersion ${{ github.run_number }}" \
+            Resources/Info.plist
+
+      - name: Test before shipping
+        run: ./test.sh
+
+      - name: Build app
+        run: ./build.sh
+
+      - name: Package
+        # ditto, not zip: it preserves the bundle's symlinks, permissions and
+        # extended attributes, which a plain zip mangles.
+        run: |
+          ditto -c -k --keepParent Stoplight.app Stoplight.zip
+          shasum -a 256 Stoplight.zip | tee Stoplight.zip.sha256
+
+      - name: Verify the packaged app
+        run: |
+          codesign --verify --deep --strict --verbose=2 Stoplight.app
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
+            Stoplight.app/Contents/Info.plist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Stoplight-${{ steps.version.outputs.version }}
+          path: |
+            Stoplight.zip
+            Stoplight.zip.sha256
+          if-no-files-found: error
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Stoplight.zip
+            Stoplight.zip.sha256
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            1. Download and unzip `Stoplight.zip`
+            2. Move `Stoplight.app` to `/Applications`
+            3. Remove the download quarantine, since this build is ad-hoc signed
+               rather than notarized:
+
+               ```sh
+               xattr -dr com.apple.quarantine /Applications/Stoplight.app
+               ```
+
+            4. Open it. The stoplight appears in the menu bar — there is no Dock icon.
+
+            Clicking a session to focus its terminal asks for Accessibility access
+            the first time. Everything else works without permissions.

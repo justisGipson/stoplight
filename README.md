@@ -1,5 +1,12 @@
 # Stoplight
 
+[![tests](https://github.com/justisGipson/stoplight/actions/workflows/test.yml/badge.svg)](https://github.com/justisGipson/stoplight/actions/workflows/test.yml)
+[![release](https://github.com/justisGipson/stoplight/actions/workflows/release.yml/badge.svg)](https://github.com/justisGipson/stoplight/actions/workflows/release.yml)
+[![latest release](https://img.shields.io/github/v/release/justisGipson/stoplight?sort=semver&color=blue)](https://github.com/justisGipson/stoplight/releases/latest)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](#requirements)
+[![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](#requirements)
+[![dependencies](https://img.shields.io/badge/dependencies-none-2ea043)](Package.swift)
+
 A macOS menu bar app that shows, at a glance, whether any Claude Code session on
 this machine needs you.
 
@@ -68,6 +75,20 @@ to your `settings.json`.
 - Swift 6 toolchain (developed on 6.3.3)
 - Xcode **not** required — Command Line Tools is enough
 
+## Install
+
+Grab `Stoplight.zip` from the [latest release](https://github.com/justisGipson/stoplight/releases/latest),
+unzip it, and move `Stoplight.app` to `/Applications`. Then:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Stoplight.app
+```
+
+That step is needed because the build is **ad-hoc signed, not notarized** — there
+is no Apple Developer certificate behind it, so Gatekeeper refuses it until the
+download quarantine is cleared. The app has no Dock icon; look for the stoplight in
+the menu bar.
+
 ## Build and run
 
 ```sh
@@ -93,6 +114,26 @@ Command Line Tools, but SwiftPM only wires up its framework search paths when
 fails with `no such module 'Testing'`. The script points at `Testing.framework`
 and `lib_TestingInterop.dylib` explicitly, resolving both from `xcode-select -p`
 so that installing Xcode later does not break it.
+
+## Continuous integration
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `.github/workflows/test.yml` | push to `main`, pull requests | builds and runs the suite |
+| `.github/workflows/release.yml` | a `v*` tag, or run by hand | tests, builds, packages, publishes |
+
+The release workflow stamps the tag into `CFBundleShortVersionString` *before*
+building — `build.sh` signs the bundle as its last step, so editing the plist
+afterwards would invalidate that signature. It packages with `ditto` rather than
+`zip`, which preserves the bundle's symlinks, permissions and extended attributes,
+and publishes the zip plus a SHA-256 alongside it. Running it by hand (without a
+tag) uploads a build artifact and publishes nothing.
+
+Tag a release with:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
 
 ## Layout
 

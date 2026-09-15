@@ -1,17 +1,26 @@
 #!/bin/bash
-# Runs the suite. The flags exist because this machine has Command Line Tools but
-# not full Xcode: Testing.framework ships in CLT, but SwiftPM only wires up its
-# search paths when XCTest is present, which it isn't. So we point at both the
-# framework and its interop dylib by hand.
+# Runs the suite.
+#
+# With full Xcode installed, XCTest is present and SwiftPM wires up Swift Testing's
+# search paths by itself — plain `swift test` works. With only Command Line Tools
+# (no XCTest), it does not, even though Testing.framework ships inside CLT. In that
+# case we point at the framework and its interop dylib by hand.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-CLT="$(xcode-select -p)"
-FW="$CLT/Library/Developer/Frameworks"
-LIB="$CLT/Library/Developer/usr/lib"
+DEVELOPER_DIR="$(xcode-select -p)"
+
+# Only full Xcode has a Platforms directory; CLT does not.
+if [ -d "$DEVELOPER_DIR/Platforms/MacOSX.platform" ]; then
+    exec swift test "$@"
+fi
+
+FW="$DEVELOPER_DIR/Library/Developer/Frameworks"
+LIB="$DEVELOPER_DIR/Library/Developer/usr/lib"
 
 if [ ! -d "$FW/Testing.framework" ]; then
     echo "Testing.framework not found under $FW" >&2
+    echo "Install Xcode, or a Command Line Tools version that bundles Swift Testing." >&2
     exit 1
 fi
 
