@@ -31,9 +31,13 @@ public final class StatusItemController: NSObject {
     private let hoverIntent: TimeInterval = 0.22
 
     private let watcher = SessionWatcher()
+    private let scoreboard = ScoreboardWindowController()
     /// Fires exactly when the next just-finished session stops counting as
     /// attention. A one-shot rather than a poll, so idle cost stays at zero.
     private var decayTask: Task<Void, Never>?
+    /// Crashes are written through to disk as they happen; the in-memory casualty
+    /// list is cleared by dismissal and lost on quit, but the tally should survive.
+    private var recordedCrashes: Set<pid_t> = []
 
     private var state = LightState() {
         didSet { if state != oldValue { render() } }
@@ -84,8 +88,21 @@ public final class StatusItemController: NSObject {
                            casualties: watcher.casualties,
                            snapshots: watcher.snapshots,
                            now: now)
+        recordNewCrashes()
         if hoverPanel.isVisible { layoutHoverPanel() }
         scheduleAttentionDecay(now: now)
+    }
+
+    private func recordNewCrashes() {
+        let unrecorded = watcher.casualties.filter { !recordedCrashes.contains($0.pid) }
+        guard !unrecorded.isEmpty else { return }
+
+        var store = ScoreboardStore.load()
+        for casualty in unrecorded {
+            recordedCrashes.insert(casualty.pid)
+            store.crashes.append("\(casualty.folder)|\(Int(casualty.diedAt.timeIntervalSince1970))")
+        }
+        store.save()
     }
 
     /// Attention expires on a clock, not on a filesystem event, so schedule a
@@ -179,6 +196,10 @@ public final class StatusItemController: NSObject {
                           in: button)
     }
 
+    @objc private func showScoreboard() {
+        scoreboard.show()
+    }
+
     @objc private func dismissFailures() {
         watcher.dismissCasualties()
     }
@@ -200,6 +221,12 @@ public final class StatusItemController: NSObject {
             menu.addItem(dismiss)
             menu.addItem(.separator())
         }
+
+        let usage = NSMenuItem(title: "Usage & Scoreboard…",
+                               action: #selector(showScoreboard), keyEquivalent: "")
+        usage.target = self
+        menu.addItem(usage)
+        menu.addItem(.separator())
 
         let diagnostics = NSMenuItem(title: watcher.diagnostics.summary,
                                      action: nil, keyEquivalent: "")

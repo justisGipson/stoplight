@@ -23,7 +23,8 @@ opens the menu.
 
 ## Status
 
-**Milestones 1–4 of 5 done. All three lamps read live state; no hooks required.**
+**All five milestones done.** Three lamps reading live state, plus a usage window.
+No hooks, no dependencies, nothing written to your Claude Code config.
 
 What works today:
 
@@ -38,7 +39,9 @@ What works today:
 - Hover panel per session: folder, what it is doing, the running tool, context
   size, age
 - Dismissing failures, and a diagnostics line, in the menu
-- 82 passing tests
+- **Usage & Scoreboard** window off the menu: lifetime cost, tokens, sessions and
+  crashes, ranked by project and by model
+- 95 passing tests
 
 **What red catches.** Two things, neither of them an explicit failure field,
 because Claude Code does not write one.
@@ -124,8 +127,15 @@ scraping or log tailing involved.
   size and mtime, so an unchanged transcript costs nothing.
 - **`~/.claude/projects/<slug>/<sessionId>.jsonl`** — live transcript, for token
   counts and the current tool name. Parsed lazily, only while the panel is open.
-- **`~/.claude/stats-cache.json`** — pre-aggregated daily counts, to backfill the
-  scoreboard.
+- **`cost-state` lines in the transcript** — Claude Code's own cumulative rollup
+  per session: `totalCostUSD`, per-model input/output/thinking/cache tokens,
+  durations, lines added and removed. Rare (five in a thirteen-thousand-line
+  transcript) but cumulative, so only the last one matters, and it sits near the
+  end. A backwards byte search finds it without parsing any JSON on the way, which
+  is what makes 107 MB of transcripts scannable in well under a second.
+- **`~/.claude/stats-cache.json`** — Claude Code's own totals. Shown alongside, and
+  always labelled with its `lastComputedDate`, because it is recomputed only
+  occasionally and can lag by weeks.
 
 Scope is the default `~/.claude` config dir only. Multi-account was considered and
 dropped: a second account cannot be auto-discovered anyway, because mapping a
@@ -135,6 +145,21 @@ environment, and macOS does not allow it.
 `~/.claude/sessions/` is an internal Claude Code implementation detail, not a
 public API. It is read through a tolerant, fail-open decoder so a format change in
 a future version degrades to "unknown" instead of crashing.
+
+## The usage window
+
+Reached from the menu, not from hover — hover stays a glance, this is a sit-down.
+
+Headline figures are stat tiles rather than charts: a single number does not need
+a plot. The rankings are single-series magnitude bars, one hue, rounded at the data
+end and square at the baseline, with values in text ink rather than the bar's
+colour. There is no categorical palette anywhere in it, so there is no hue cycling
+and nothing for colour to misidentify — length carries the whole message.
+
+Persistence is a JSON file in `~/Library/Application Support/Stoplight/`, not
+SQLite. The design originally called for SQLite; the actual shape is one entry per
+transcript, read whole and written whole, with no query beyond summing. SQLite
+would have added a C API, a schema and migrations to buy indexing nothing needs.
 
 ## Known constraints
 
@@ -147,6 +172,14 @@ stoplight — the menu bar icon signals, the panel is what you actually read.
 A horizontal arrangement would afford ~8.5px lamps, which is meaningfully more
 legible but reads as three loose dots rather than a stoplight. That trade was made
 deliberately in favour of the stoplight.
+
+**Green and yellow are hard to tell apart with protanopia.** Measured, not
+guessed: ΔE 4.7 between `#38c759` and `#fabc17` under a protan simulation, below
+even the 6–8 floor. The hues stay, because a stoplight that is not red/yellow/green
+is not a stoplight. What makes it readable anyway is the fixed-slot layout — all
+three lamps always drawn, red always on top — so identity is carried by which
+position is bright, not by hue. Every status readout in the app is labelled in text
+for the same reason.
 
 ## Development notes
 
@@ -182,5 +215,5 @@ relayout and the downscaling blur together.
 3. ✅ Crash detection, blocked-on-you from `status: "waiting"`, and stalled API
    errors — all without hooks
 4. ✅ Panel detail: running tool, context size, failure reason
-5. SQLite scoreboard + `stats-cache.json` backfill (lifetime totals and cost need a
-   full transcript pass, which is why they are not in the hover panel)
+5. ✅ Usage window: lifetime cost and tokens from `cost-state` rollups, ranked by
+   project and model, cached against file size and mtime
