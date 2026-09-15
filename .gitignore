@@ -1,0 +1,4 @@
+.build/
+Stoplight.app/
+.DS_Store
+claudedocs/
