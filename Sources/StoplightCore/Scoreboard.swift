@@ -51,15 +51,19 @@ public struct ScoredSession: Equatable, Sendable {
     public var lastActive: Date
 }
 
-public struct ScoreboardSummary: Equatable, Sendable {
+public struct ScoreboardSummary: Sendable {
     public var totalCostUSD = 0.0
     public var totalTokens = 0
     public var sessions = 0
     public var linesAdded = 0
     public var linesRemoved = 0
     public var toolTimeMs = 0
+    public var compactions = 0
     public var projects: [ProjectTotals] = []
     public var models: [ModelTotals] = []
+    /// Ranked by how often each was credited for work.
+    public var skills: [(name: String, count: Int)] = []
+    public var mcpServers: [(name: String, count: Int)] = []
     public var range: TimeRange = .all
     public var transcriptsSeen = 0
     public var transcriptsWithCost = 0
@@ -157,6 +161,8 @@ public enum ScoreboardBuilder {
 
         var projects: [String: ProjectTotals] = [:]
         var models: [String: ModelTotals] = [:]
+        var skills: [String: Int] = [:]
+        var mcpServers: [String: Int] = [:]
 
         for entry in scanned where range.contains(entry.lastActive, now: now) {
             let cost = entry.cost
@@ -166,6 +172,9 @@ public enum ScoreboardBuilder {
             summary.linesAdded += cost.linesAdded
             summary.linesRemoved += cost.linesRemoved
             summary.toolTimeMs += cost.totalToolDurationMs
+            summary.compactions += cost.compactions
+            for (name, count) in cost.skills { skills[name, default: 0] += count }
+            for (name, count) in cost.mcpServers { mcpServers[name, default: 0] += count }
 
             let name = cost.folder.isEmpty ? "unknown" : cost.folder
             var project = projects[name] ?? ProjectTotals(folder: name)
@@ -188,6 +197,10 @@ public enum ScoreboardBuilder {
         summary.crashes = crashes.filter { range.contains(crashDate($0), now: now) }.count
         summary.projects = projects.values.sorted { $0.costUSD > $1.costUSD }
         summary.models = models.values.sorted { $0.costUSD > $1.costUSD }
+        summary.skills = skills.map { (name: $0.key, count: $0.value) }
+            .sorted { $0.count > $1.count }
+        summary.mcpServers = mcpServers.map { (name: $0.key, count: $0.value) }
+            .sorted { $0.count > $1.count }
         return summary
     }
 

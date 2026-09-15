@@ -27,6 +27,11 @@ public struct CostState: Equatable, Sendable, Codable {
     /// Timestamp of the last entry in the transcript.
     public var lastActivity: Date?
     public var modelUsage: [String: ModelUsage] = [:]
+    /// How often each skill and MCP server was credited for work in this session.
+    public var skills: [String: Int] = [:]
+    public var mcpServers: [String: Int] = [:]
+    /// Context compactions. A session compacting repeatedly is churning its cache.
+    public var compactions = 0
 
     public var totalTokens: Int { modelUsage.values.reduce(0) { $0 + $1.totalTokens } }
 }
@@ -77,6 +82,9 @@ public enum CostStateReader {
 
         state.folder = folder(in: data, notBefore: floor) ?? ""
         state.lastActivity = lastActivity(in: data, notBefore: floor)
+        state.skills = values(forKey: "attributionSkill", in: data)
+        state.mcpServers = values(forKey: "attributionMcpServer", in: data)
+        state.compactions = occurrences(of: Array("\"compactMetadata\"".utf8), in: data)
         return state
     }
 
@@ -99,6 +107,57 @@ public enum CostStateReader {
               let stamp = (object as? [String: Any])?["timestamp"] as? String
         else { return nil }
         return TranscriptReader.date(stamp)
+    }
+
+    /// Tallies the values of a string key across the whole file.
+    ///
+    /// Scans bytes and slices out each value rather than decoding JSON: these keys
+    /// appear on a small fraction of lines, and parsing every line of a 36 MB
+    /// transcript to find them would cost orders of magnitude more.
+    static func values(forKey key: String, in data: Data) -> [String: Int] {
+        let needle = Array("\"\(key)\":\"".utf8)
+        let quote = UInt8(ascii: "\"")
+        var counts: [String: Int] = [:]
+        var index = data.startIndex
+
+        while index + needle.count < data.endIndex {
+            guard let hit = firstRange(of: needle, in: data, from: index) else { break }
+            var end = hit.upperBound
+            while end < data.endIndex, data[end] != quote { end += 1 }
+            if end > hit.upperBound {
+                let value = String(decoding: data[hit.upperBound..<end], as: UTF8.self)
+                counts[value, default: 0] += 1
+            }
+            index = end
+        }
+        return counts
+    }
+
+    static func occurrences(of needle: [UInt8], in data: Data) -> Int {
+        var count = 0
+        var index = data.startIndex
+        while let hit = firstRange(of: needle, in: data, from: index) {
+            count += 1
+            index = hit.upperBound
+        }
+        return count
+    }
+
+    static func firstRange(of needle: [UInt8], in data: Data,
+                           from start: Data.Index) -> Range<Data.Index>? {
+        guard !needle.isEmpty, start >= data.startIndex else { return nil }
+        var probe = start
+        let limit = data.endIndex - needle.count
+        while probe <= limit {
+            var matched = true
+            for offset in 0..<needle.count where data[probe + offset] != needle[offset] {
+                matched = false
+                break
+            }
+            if matched { return probe..<(probe + needle.count) }
+            probe += 1
+        }
+        return nil
     }
 
     /// Last line containing `needle`, searching backwards.

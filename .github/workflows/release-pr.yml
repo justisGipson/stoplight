@@ -104,7 +104,13 @@ jobs:
 
           if gh pr view release/next --json number >/dev/null 2>&1; then
             gh pr edit release/next --title "release v$VERSION" --body "$BODY"
-          else
-            gh pr create --base main --head release/next \
-              --title "release v$VERSION" --body "$BODY"
+          elif ! gh pr create --base main --head release/next \
+                 --title "release v$VERSION" --body "$BODY"; then
+            # The branch is pushed either way, so a blocked PR is recoverable by
+            # hand rather than lost work.
+            echo "::warning::Could not open the PR automatically. The release/next \
+          branch is pushed and ready — open it manually, or enable Settings → \
+          Actions → General → 'Allow GitHub Actions to create and approve pull \
+          requests'."
+            echo "Open it here: ${{ github.server_url }}/${{ github.repository }}/compare/main...release/next?expand=1"
           fi

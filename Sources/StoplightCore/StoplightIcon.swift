@@ -55,11 +55,23 @@ enum StoplightIcon {
 
     // MARK: - Drawing
 
-    static func image(for state: LightState) -> NSImage {
-        let size = NSSize(width: canvasWidth(), height: barHeight)
+    static func image(for state: LightState, trailingText: String? = nil) -> NSImage {
+        let label = trailingText.flatMap { $0.isEmpty ? nil : $0 }
+        let labelAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+            .foregroundColor: NSColor.labelColor,
+        ]
+        let labelSize = label.map { ($0 as NSString).size(withAttributes: labelAttributes) }
+        let size = NSSize(width: canvasWidth() + (labelSize.map { $0.width + 5 } ?? 0),
+                          height: barHeight)
         let image = NSImage(size: size, flipped: false) { _ in
             if let ctx = NSGraphicsContext.current?.cgContext {
-                draw(state, in: ctx, size: size)
+                draw(state, in: ctx, size: NSSize(width: canvasWidth(), height: size.height))
+            }
+            if let label, let labelSize {
+                (label as NSString).draw(
+                    at: NSPoint(x: canvasWidth() + 5, y: (size.height - labelSize.height) / 2),
+                    withAttributes: labelAttributes)
             }
             return true
         }

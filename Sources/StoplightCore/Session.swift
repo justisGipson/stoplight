@@ -108,6 +108,11 @@ extension Session {
             return .failed
         }
 
+        // A live rate limit stalls the session whatever its status says.
+        if let limit = snapshot?.rateLimit, limit.isActive(now: now) {
+            return .failed
+        }
+
         switch status {
         case .busy, .shell:
             return .running

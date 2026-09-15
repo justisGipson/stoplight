@@ -60,6 +60,14 @@ public final class Settings: ObservableObject {
 
     /// Not stored here — it lives in `~/.claude/settings.json`, because Claude Code
     /// is what reads it. This mirrors the file so the UI can show and change it.
+    @Published public var notificationsEnabled: Bool {
+        didSet { defaults.set(notificationsEnabled, forKey: Keys.notifications) }
+    }
+
+    @Published public var showCostInMenuBar: Bool {
+        didSet { defaults.set(showCostInMenuBar, forKey: Keys.menuBarCost) }
+    }
+
     @Published public var provider: ClaudeProvider = .anthropic
     @Published public var providerMessage: String?
 
@@ -83,6 +91,8 @@ public final class Settings: ObservableObject {
     private enum Keys {
         static let appearance = "appearance"
         static let fontScale = "fontScale"
+        static let notifications = "notificationsEnabled"
+        static let menuBarCost = "showCostInMenuBar"
     }
 
     private let defaults: UserDefaults
@@ -93,6 +103,9 @@ public final class Settings: ObservableObject {
                   ?? .system
         fontScale = FontScale(rawValue: defaults.string(forKey: Keys.fontScale) ?? "")
                  ?? .medium
+        // Default on: the notification is the half of this app the menu bar cannot do.
+        notificationsEnabled = defaults.object(forKey: Keys.notifications) as? Bool ?? true
+        showCostInMenuBar = defaults.bool(forKey: Keys.menuBarCost)
     }
 
     /// Resets this app's own preferences. Deliberately does not touch the
@@ -100,5 +113,7 @@ public final class Settings: ObservableObject {
     public func reset() {
         appearance = .system
         fontScale = .medium
+        notificationsEnabled = true
+        showCostInMenuBar = false
     }
 }

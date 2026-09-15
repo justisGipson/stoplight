@@ -20,7 +20,7 @@ final class SettingsWindowController {
         }
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 430),
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 620),
             styleMask: [.titled, .closable],
             backing: .buffered, defer: false)
         window.title = "Stoplight Settings"
@@ -65,6 +65,22 @@ struct SettingsView: View {
                 .labelsHidden()
             }
 
+            row("Notifications",
+                note: "Fires when a session starts waiting on you, crashes, hits a rate "
+                    + "limit, passes $5, or has sat idle for three days. macOS asks "
+                    + "permission the first time.") {
+                Toggle("Notify me when a session needs attention",
+                       isOn: $settings.notificationsEnabled)
+                    .toggleStyle(.checkbox)
+            }
+
+            row("Menu bar",
+                note: "Shows the combined cost of the sessions running right now, "
+                    + "beside the lamps.") {
+                Toggle("Show running cost", isOn: $settings.showCostInMenuBar)
+                    .toggleStyle(.checkbox)
+            }
+
             row("Provider",
                 note: settings.providerMessage
                     ?? "\(settings.provider.note) Claude Code reads this at launch, so a "
@@ -87,7 +103,7 @@ struct SettingsView: View {
             }
         }
         .padding(20)
-        .frame(width: 400, height: 430, alignment: .topLeading)
+        .frame(width: 420, height: 620, alignment: .topLeading)
     }
 
     private func row<Content: View>(_ title: String,

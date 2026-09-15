@@ -83,6 +83,7 @@ public final class StatusItemController: NSObject {
             Task { @MainActor in self?.render() }
         }
 
+        if settings.notificationsEnabled { Notifier.shared.requestAuthorization() }
         watcher.onChange = { [weak self] in self?.refreshState() }
         watcher.start()
         refreshState()
@@ -93,12 +94,25 @@ public final class StatusItemController: NSObject {
         render()
     }
 
+    /// Combined cost of what is running right now — not a daily total, which
+    /// would need a full transcript pass on every refresh.
+    private func menuBarText() -> String? {
+        guard settings.showCostInMenuBar else { return nil }
+        let live = watcher.sessions.compactMap { watcher.snapshots[$0.sessionId]?.costUSD }
+        guard !live.isEmpty else { return nil }
+        let total = live.reduce(0, +)
+        return total >= 10 ? String(format: "$%.0f", total) : String(format: "$%.2f", total)
+    }
+
     private func applySettings() {
         // Only the app's own surfaces follow this. The status item keeps the system
         // appearance: it is drawn onto the real menu bar, and forcing light artwork
         // onto a dark bar would make it invisible.
         hoverPanel.appearance = settings.appearance.nsAppearance
         settingsWindow.applyAppearance()
+        Notifier.shared.isEnabled = settings.notificationsEnabled
+        if settings.notificationsEnabled { Notifier.shared.requestAuthorization() }
+        render()
         if hoverPanel.isVisible { layoutHoverPanel() }
     }
 
@@ -111,6 +125,11 @@ public final class StatusItemController: NSObject {
                            snapshots: watcher.snapshots,
                            now: now)
         recordNewCrashes()
+        Notifier.shared.isEnabled = settings.notificationsEnabled
+        Notifier.shared.reconcile(sessions: watcher.sessions,
+                                  casualties: watcher.casualties,
+                                  snapshots: watcher.snapshots,
+                                  now: now)
         if hoverPanel.isVisible { layoutHoverPanel() }
         scheduleAttentionDecay(now: now)
     }
@@ -148,7 +167,7 @@ public final class StatusItemController: NSObject {
     // MARK: - Rendering
 
     private func render() {
-        statusItem.button?.image = StoplightIcon.image(for: state)
+        statusItem.button?.image = StoplightIcon.image(for: state, trailingText: menuBarText())
         // No toolTip: it competes with the hover panel and wins, because AppKit
         // owns it. The panel is the tooltip.
         statusItem.button?.setAccessibilityLabel("Stoplight: \(state.summary)")

@@ -12,6 +12,11 @@ public struct TranscriptSnapshot: Equatable, Sendable {
     /// window are actually named, so it is the only reliable thing to match a
     /// window against.
     public var aiTitle: String?
+    public var gitBranch: String?
+    public var permissionMode: String?
+    public var rateLimit: RateLimit?
+    /// Latest cumulative cost, when a `cost-state` line falls inside the tail.
+    public var costUSD: Double?
 
     public var isEmpty: Bool {
         currentTool == nil && contextTokens == nil && lastErrorStatus == nil && aiTitle == nil
@@ -26,6 +31,22 @@ public struct TranscriptSnapshot: Equatable, Sendable {
     }
 
     public static let errorWindow: TimeInterval = 300
+}
+
+/// A rate limit Claude Code recorded hitting.
+///
+/// There is no live remaining-quota gauge anywhere on disk — but the moment a
+/// limit is *hit* is written down, with the type and when it lifts. That turns an
+/// unexplained stall into "rate limited until 3:40pm".
+public struct RateLimit: Equatable, Sendable {
+    public var status: String
+    public var type: String?
+    public var resetsAt: Date?
+
+    public func isActive(now: Date = Date()) -> Bool {
+        guard status == "rejected", let resetsAt else { return false }
+        return resetsAt > now
+    }
 }
 
 /// Reads `~/.claude/projects/<slug>/<sessionId>.jsonl`.
@@ -71,6 +92,31 @@ public enum TranscriptReader {
 
             if snapshot.aiTitle == nil, let title = json["aiTitle"] as? String, !title.isEmpty {
                 snapshot.aiTitle = title
+            }
+
+            if snapshot.costUSD == nil, json["type"] as? String == "cost-state",
+               let cost = json["totalCostUSD"] as? Double {
+                snapshot.costUSD = cost
+            }
+
+            if snapshot.gitBranch == nil, let branch = json["gitBranch"] as? String,
+               !branch.isEmpty, branch != "HEAD" {
+                snapshot.gitBranch = branch
+            }
+
+            if snapshot.permissionMode == nil, let mode = json["permissionMode"] as? String,
+               !mode.isEmpty {
+                snapshot.permissionMode = mode
+            }
+
+            if snapshot.rateLimit == nil, let quota = json["quotaLimits"] as? [String: Any],
+               let status = quota["status"] as? String {
+                snapshot.rateLimit = RateLimit(
+                    status: status,
+                    type: quota["rateLimitType"] as? String,
+                    resetsAt: (quota["resetsAt"] as? Double).map {
+                        Date(timeIntervalSince1970: $0)
+                    })
             }
 
             if snapshot.lastErrorStatus == nil, json["isApiErrorMessage"] as? Bool == true {

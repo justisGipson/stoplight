@@ -58,10 +58,26 @@ struct PopoverView: View {
                 .frame(width: 7, height: 7)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(session.folder)
-                    .font(scaled(12, .medium))
-                    .lineLimit(1)
-                    .truncationMode(.head)
+                HStack(spacing: 5) {
+                    Text(session.folder)
+                        .font(scaled(12, .medium))
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    if let branch = snapshot?.gitBranch {
+                        Text(branch)
+                            .font(scaled(9))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                    if let mode = snapshot?.permissionMode, mode != "default" {
+                        Text(mode)
+                            .font(scaled(8, .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.primary.opacity(0.10)))
+                    }
+                }
                 Text(detail(for: session, bucket: bucket, snapshot: snapshot))
                     .font(scaled(10))
                     .foregroundStyle(.secondary)
@@ -142,6 +158,12 @@ struct PopoverView: View {
                         snapshot: TranscriptSnapshot?) -> String {
         switch bucket {
         case .failed:
+            if let limit = snapshot?.rateLimit, limit.isActive(now: now) {
+                return Notifier.resetDescription(limit).replacingOccurrences(
+                    of: "The ", with: "").replacingOccurrences(of: " limit resets", with: " limit until")
+                    .replacingOccurrences(of: " at ", with: " ")
+                    .replacingOccurrences(of: ".", with: "")
+            }
             if let status = snapshot?.lastErrorStatus, status > 0 { return "API error \(status)" }
             return "failed"
         case .attention:

@@ -107,6 +107,12 @@ struct ScoreboardView: View {
                     ranking("By model", rows: summary.models.map {
                         (name: $0.model, value: $0.costUSD, detail: "\(compact($0.tokens)) tokens")
                     })
+                    if !summary.skills.isEmpty {
+                        tally("Skills invoked", rows: summary.skills)
+                    }
+                    if !summary.mcpServers.isEmpty {
+                        tally("MCP servers", rows: summary.mcpServers)
+                    }
                     footer(summary)
                 } else if model.isLoading {
                     Text("Reading transcripts…")
@@ -198,6 +204,33 @@ struct ScoreboardView: View {
         }
     }
 
+    /// Counts, not money — so the bars carry the comparison and the number sits
+    /// beside them in text ink.
+    private func tally(_ title: String, rows: [(name: String, count: Int)]) -> some View {
+        let peak = rows.map(\.count).max() ?? 0
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(scaled(11, .semibold))
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(rows.prefix(8), id: \.name) { row in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(row.name)
+                                .font(scaled(12))
+                                .lineLimit(1)
+                            Spacer(minLength: 12)
+                            Text("\(row.count)")
+                                .font(scaled(11, .regular, .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        bar(fraction: peak > 0 ? Double(row.count) / Double(peak) : 0)
+                    }
+                }
+            }
+        }
+    }
+
     private func bar(fraction: Double) -> some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
@@ -219,7 +252,8 @@ struct ScoreboardView: View {
         VStack(alignment: .leading, spacing: 5) {
             Divider()
             Text("\(summary.linesAdded) lines added · \(summary.linesRemoved) removed · "
-               + "\(duration(summary.toolTimeMs)) in tools")
+               + "\(duration(summary.toolTimeMs)) in tools"
+               + (summary.compactions > 0 ? " · \(summary.compactions) compactions" : ""))
                 .font(scaled(10))
                 .foregroundStyle(.secondary)
             Text(summary.range == .all
