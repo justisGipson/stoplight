@@ -17,6 +17,38 @@ public struct ModelTotals: Equatable, Identifiable, Sendable {
     public var id: String { model }
 }
 
+public enum TimeRange: String, CaseIterable, Sendable {
+    case week, month, all
+
+    public var label: String {
+        switch self {
+        case .week: "7 days"
+        case .month: "30 days"
+        case .all: "All time"
+        }
+    }
+
+    public var days: Int? {
+        switch self {
+        case .week: 7
+        case .month: 30
+        case .all: nil
+        }
+    }
+
+    public func contains(_ date: Date, now: Date = Date()) -> Bool {
+        guard let days else { return true }
+        return now.timeIntervalSince(date) <= Double(days) * 86_400
+    }
+}
+
+/// A session's rollup plus when it was last worked in.
+public struct ScoredSession: Equatable, Sendable {
+    public var cost: CostState
+    /// Transcript mtime: the last time anything happened in this session.
+    public var lastActive: Date
+}
+
 public struct ScoreboardSummary: Equatable, Sendable {
     public var totalCostUSD = 0.0
     public var totalTokens = 0
@@ -26,6 +58,7 @@ public struct ScoreboardSummary: Equatable, Sendable {
     public var toolTimeMs = 0
     public var projects: [ProjectTotals] = []
     public var models: [ModelTotals] = []
+    public var range: TimeRange = .all
     public var transcriptsSeen = 0
     public var transcriptsWithCost = 0
     /// Failures this app watched happen. Nothing on disk records these.
@@ -73,15 +106,13 @@ public struct ScoreboardStore: Codable, Equatable, Sendable {
 }
 
 public enum ScoreboardBuilder {
-    /// Walks every transcript, reusing cached rollups for files that have not grown.
-    public static func build(projectsRoot: URL, store: inout ScoreboardStore) -> ScoreboardSummary {
-        var summary = ScoreboardSummary()
-        var projects: [String: ProjectTotals] = [:]
-        var models: [String: ModelTotals] = [:]
+    /// Walks every transcript once, reusing cached rollups for files that have not
+    /// grown. Ranges are applied afterwards, in memory, so switching between them
+    /// costs nothing.
+    public static func scan(projectsRoot: URL, store: inout ScoreboardStore) -> [ScoredSession] {
+        var scanned: [ScoredSession] = []
 
         for url in transcripts(in: projectsRoot) {
-            summary.transcriptsSeen += 1
-
             let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
             let size = attributes?[.size] as? Int ?? 0
             let modified = attributes?[.modificationDate] as? Date ?? .distantPast
@@ -97,6 +128,31 @@ public enum ScoreboardBuilder {
 
             // A transcript with no cost-state line is a session too short to bill.
             guard let cost else { continue }
+            scanned.append(ScoredSession(cost: cost, lastActive: modified))
+        }
+        return scanned
+    }
+
+    /// Aggregates the scanned sessions for one range.
+    ///
+    /// A `cost-state` rollup is cumulative for its whole session, never broken down
+    /// by day, so a range can only include or exclude a session whole. Sessions are
+    /// selected by when they were last worked in, and each contributes its full
+    /// cost — a long-running session straddling the boundary counts entirely.
+    public static func summarize(_ scanned: [ScoredSession],
+                                 crashes: [String],
+                                 range: TimeRange,
+                                 totalTranscripts: Int,
+                                 now: Date = Date()) -> ScoreboardSummary {
+        var summary = ScoreboardSummary()
+        summary.range = range
+        summary.transcriptsSeen = totalTranscripts
+
+        var projects: [String: ProjectTotals] = [:]
+        var models: [String: ModelTotals] = [:]
+
+        for entry in scanned where range.contains(entry.lastActive, now: now) {
+            let cost = entry.cost
             summary.transcriptsWithCost += 1
             summary.totalCostUSD += cost.totalCostUSD
             summary.totalTokens += cost.totalTokens
@@ -122,10 +178,18 @@ public enum ScoreboardBuilder {
         }
 
         summary.sessions = summary.transcriptsWithCost
-        summary.crashes = store.crashes.count
+        summary.crashes = crashes.filter { range.contains(crashDate($0), now: now) }.count
         summary.projects = projects.values.sorted { $0.costUSD > $1.costUSD }
         summary.models = models.values.sorted { $0.costUSD > $1.costUSD }
         return summary
+    }
+
+    /// Crash records are "folder|epochSeconds". An unparseable one is treated as
+    /// ancient so it never inflates a recent window.
+    static func crashDate(_ record: String) -> Date {
+        guard let raw = record.split(separator: "|").last, let seconds = Double(raw)
+        else { return .distantPast }
+        return Date(timeIntervalSince1970: seconds)
     }
 
     static func transcripts(in root: URL) -> [URL] {

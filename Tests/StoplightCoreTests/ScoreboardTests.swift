@@ -26,6 +26,13 @@ private func costLine(cost: Double, input: Int = 100, output: Int = 50, model: S
 
 private let cwdLine = #"{"type":"user","cwd":"/Users/x/dev/lesson-generation-agent"}"#
 
+/// Scan then aggregate over all time — what the old single-shot build did.
+private func buildAll(_ root: URL, _ store: inout ScoreboardStore) -> ScoreboardSummary {
+    let scanned = ScoreboardBuilder.scan(projectsRoot: root, store: &store)
+    return ScoreboardBuilder.summarize(scanned, crashes: store.crashes, range: .all,
+                                       totalTranscripts: ScoreboardBuilder.transcripts(in: root).count)
+}
+
 // MARK: - Reading cost-state
 
 @Test func readsACostStateRollup() throws {
@@ -89,7 +96,7 @@ private let cwdLine = #"{"type":"user","cwd":"/Users/x/dev/lesson-generation-age
     _ = try write([#"{"cwd":"/Users/x/dev/beta"}"#, costLine(cost: 8.0)], to: two, named: "b.jsonl")
 
     var store = ScoreboardStore()
-    let summary = ScoreboardBuilder.build(projectsRoot: root, store: &store)
+    let summary = buildAll(root, &store)
 
     #expect(summary.totalCostUSD == 10.0)
     #expect(summary.sessions == 2)
@@ -106,7 +113,7 @@ private let cwdLine = #"{"type":"user","cwd":"/Users/x/dev/lesson-generation-age
     _ = try write([#"{"type":"assistant"}"#], to: project, named: "short.jsonl")
 
     var store = ScoreboardStore()
-    let summary = ScoreboardBuilder.build(projectsRoot: root, store: &store)
+    let summary = buildAll(root, &store)
     #expect(summary.transcriptsSeen == 1)
     #expect(summary.transcriptsWithCost == 0)
     #expect(summary.totalCostUSD == 0)
@@ -122,7 +129,7 @@ private let cwdLine = #"{"type":"user","cwd":"/Users/x/dev/lesson-generation-age
     let url = try write([cwdLine, costLine(cost: 4.0)], to: project, named: "a.jsonl")
 
     var store = ScoreboardStore()
-    _ = ScoreboardBuilder.build(projectsRoot: root, store: &store)
+    _ = buildAll(root, &store)
     // Keyed by the path directory enumeration produced, which resolves /var to
     // /private/var — not necessarily the string we built the file from.
     #expect(store.entries.count == 1)
@@ -133,12 +140,12 @@ private let cwdLine = #"{"type":"user","cwd":"/Users/x/dev/lesson-generation-age
     // The file on disk still says 4.0, so getting 42.0 back can only mean the
     // builder trusted the cache and never reopened it.
     store.entries[key]?.cost?.totalCostUSD = 42.0
-    #expect(ScoreboardBuilder.build(projectsRoot: root, store: &store).totalCostUSD == 42.0)
+    #expect(buildAll(root, &store).totalCostUSD == 42.0)
 
     // Touching the file invalidates the entry and the real value returns.
     try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)],
                                           ofItemAtPath: url.path)
-    #expect(ScoreboardBuilder.build(projectsRoot: root, store: &store).totalCostUSD == 4.0)
+    #expect(buildAll(root, &store).totalCostUSD == 4.0)
 }
 
 @Test func storeRoundTripsThroughDisk() throws {
@@ -181,4 +188,82 @@ private let cwdLine = #"{"type":"user","cwd":"/Users/x/dev/lesson-generation-age
     let today = ClaudeStats.dayFormatter.string(from: Date())
     try Data(#"{"totalSessions":1,"lastComputedDate":"\#(today)"}"#.utf8).write(to: url)
     #expect(ClaudeStats.load(from: url)?.isStale == false)
+}
+
+// MARK: - Time ranges
+
+private func scored(cost: Double, daysAgo: Double, folder: String = "alpha",
+                    now: Date = Date()) -> ScoredSession {
+    var state = CostState()
+    state.totalCostUSD = cost
+    state.folder = folder
+    state.modelUsage = ["opus": ModelUsage(inputTokens: 100, costUSD: cost)]
+    return ScoredSession(cost: state, lastActive: now.addingTimeInterval(-daysAgo * 86_400))
+}
+
+@Test func allTimeIncludesEverything() {
+    let now = Date()
+    let summary = ScoreboardBuilder.summarize(
+        [scored(cost: 1, daysAgo: 1, now: now), scored(cost: 2, daysAgo: 400, now: now)],
+        crashes: [], range: .all, totalTranscripts: 2, now: now)
+    #expect(summary.totalCostUSD == 3)
+    #expect(summary.sessions == 2)
+}
+
+@Test func sevenDaysExcludesOlderSessions() {
+    let now = Date()
+    let summary = ScoreboardBuilder.summarize(
+        [scored(cost: 1, daysAgo: 2, now: now), scored(cost: 99, daysAgo: 30, now: now)],
+        crashes: [], range: .week, totalTranscripts: 2, now: now)
+    #expect(summary.totalCostUSD == 1)
+    #expect(summary.sessions == 1)
+}
+
+@Test func thirtyDaysIsWiderThanSeven() {
+    let now = Date()
+    let sessions = [scored(cost: 1, daysAgo: 2, now: now),
+                    scored(cost: 10, daysAgo: 20, now: now)]
+    let week = ScoreboardBuilder.summarize(sessions, crashes: [], range: .week,
+                                           totalTranscripts: 2, now: now)
+    let month = ScoreboardBuilder.summarize(sessions, crashes: [], range: .month,
+                                            totalTranscripts: 2, now: now)
+    #expect(week.totalCostUSD == 1)
+    #expect(month.totalCostUSD == 11)
+}
+
+@Test func theRangeBoundaryIsInclusive() {
+    let now = Date()
+    // Exactly seven days old still counts as the last seven days.
+    #expect(TimeRange.week.contains(now.addingTimeInterval(-7 * 86_400), now: now))
+    #expect(TimeRange.week.contains(now.addingTimeInterval(-7 * 86_400 - 60), now: now) == false)
+}
+
+@Test func rangesAlsoFilterProjectsAndModels() {
+    let now = Date()
+    let summary = ScoreboardBuilder.summarize(
+        [scored(cost: 5, daysAgo: 1, folder: "recent", now: now),
+         scored(cost: 5, daysAgo: 90, folder: "ancient", now: now)],
+        crashes: [], range: .week, totalTranscripts: 2, now: now)
+    #expect(summary.projects.map { $0.folder } == ["recent"])
+    #expect(summary.models.first?.costUSD == 5)
+}
+
+@Test func crashesAreFilteredByRangeToo() {
+    let now = Date()
+    let recent = "alpha|\(Int(now.addingTimeInterval(-3600).timeIntervalSince1970))"
+    let old = "beta|\(Int(now.addingTimeInterval(-90 * 86_400).timeIntervalSince1970))"
+
+    let week = ScoreboardBuilder.summarize([], crashes: [recent, old], range: .week,
+                                           totalTranscripts: 0, now: now)
+    let all = ScoreboardBuilder.summarize([], crashes: [recent, old], range: .all,
+                                          totalTranscripts: 0, now: now)
+    #expect(week.crashes == 1)
+    #expect(all.crashes == 2)
+}
+
+@Test func anUnparseableCrashRecordNeverInflatesARecentWindow() {
+    let now = Date()
+    let summary = ScoreboardBuilder.summarize([], crashes: ["garbage"], range: .week,
+                                              totalTranscripts: 0, now: now)
+    #expect(summary.crashes == 0)
 }

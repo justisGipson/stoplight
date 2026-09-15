@@ -7,23 +7,41 @@ final class ScoreboardModel: ObservableObject {
     @Published var stats: ClaudeStats?
     @Published var isLoading = false
 
+    /// Changing the range re-aggregates what is already in memory — no rescan.
+    @Published var range: TimeRange = .all {
+        didSet { if range != oldValue { summarize() } }
+    }
+
+    private var scanned: [ScoredSession] = []
+    private var crashes: [String] = []
+    private var totalTranscripts = 0
+
     func load() {
         guard !isLoading else { return }
         isLoading = true
         let root = TranscriptReader.defaultProjectsRoot
 
         Task {
-            let summary = await Task.detached(priority: .userInitiated) {
+            let (scanned, crashes, total) = await Task.detached(priority: .userInitiated) {
                 var store = ScoreboardStore.load()
-                let built = ScoreboardBuilder.build(projectsRoot: root, store: &store)
+                let found = ScoreboardBuilder.scan(projectsRoot: root, store: &store)
                 store.save()
-                return built
+                return (found, store.crashes,
+                        ScoreboardBuilder.transcripts(in: root).count)
             }.value
 
-            self.summary = summary
+            self.scanned = scanned
+            self.crashes = crashes
+            self.totalTranscripts = total
             self.stats = ClaudeStats.load()
+            self.summarize()
             self.isLoading = false
         }
+    }
+
+    private func summarize() {
+        summary = ScoreboardBuilder.summarize(scanned, crashes: crashes, range: range,
+                                              totalTranscripts: totalTranscripts)
     }
 }
 
@@ -78,6 +96,8 @@ struct ScoreboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                rangePicker
+
                 if let summary = model.summary, !summary.isEmpty {
                     tiles(summary)
                     ranking("By project", rows: summary.projects.map {
@@ -93,7 +113,9 @@ struct ScoreboardView: View {
                         .font(scaled(12))
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("No usage data found in ~/.claude/projects")
+                    Text(model.range == .all
+                         ? "No usage data found in ~/.claude/projects"
+                         : "Nothing in the last \(model.range.label.lowercased())")
                         .font(scaled(12))
                         .foregroundStyle(.secondary)
                 }
@@ -102,6 +124,15 @@ struct ScoreboardView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear { model.load() }
+    }
+
+    private var rangePicker: some View {
+        Picker("", selection: $model.range) {
+            ForEach(TimeRange.allCases, id: \.self) { Text($0.label).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(maxWidth: 280)
     }
 
     // MARK: Headline numbers — a stat tile, not a chart
@@ -191,9 +222,14 @@ struct ScoreboardView: View {
                + "\(duration(summary.toolTimeMs)) in tools")
                 .font(scaled(10))
                 .foregroundStyle(.secondary)
-            Text("\(summary.transcriptsWithCost) of \(summary.transcriptsSeen) transcripts carry cost data")
+            Text(summary.range == .all
+                 ? "\(summary.transcriptsWithCost) of \(summary.transcriptsSeen) transcripts carry cost data"
+                 : "\(summary.transcriptsWithCost) of \(summary.transcriptsSeen) sessions were active in "
+                 + "the last \(summary.range.label.lowercased()); each contributes its whole cost, "
+                 + "because Claude Code records cost per session rather than per day")
                 .font(scaled(10))
                 .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
             if let stats = model.stats, let computed = stats.lastComputedDate {
                 // Claude Code's own cache lags, so never present it as current.
                 Text("Claude Code reports \(stats.totalSessions) sessions and "
