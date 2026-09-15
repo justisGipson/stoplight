@@ -37,16 +37,26 @@ public final class SessionWatcher {
     public private(set) var diagnostics = SessionDiagnostics()
     public var onChange: (() -> Void)?
 
+    public private(set) var snapshots: [String: TranscriptSnapshot] = [:]
+
     public let directory: URL
+    public let projectsRoot: URL
     private var stream: FSEventStreamRef?
+
+    /// Transcripts are append-only and often large, so a snapshot is recomputed
+    /// only when the file actually grows.
+    private var transcriptCache: [String: (url: URL, size: Int, modified: Date,
+                                           snapshot: TranscriptSnapshot)] = [:]
 
     nonisolated public static var defaultDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appending(path: ".claude/sessions", directoryHint: .isDirectory)
     }
 
-    public init(directory: URL = SessionWatcher.defaultDirectory) {
+    public init(directory: URL = SessionWatcher.defaultDirectory,
+                projectsRoot: URL = TranscriptReader.defaultProjectsRoot) {
         self.directory = directory
+        self.projectsRoot = projectsRoot
     }
 
     public func start() {
@@ -95,14 +105,40 @@ public final class SessionWatcher {
             survivors.append(casualty)
         }
 
+        var found_snapshots: [String: TranscriptSnapshot] = [:]
+        for session in found {
+            found_snapshots[session.sessionId] = snapshot(for: session)
+        }
+
         guard found != sessions
            || survivors != casualties
+           || found_snapshots != snapshots
            || diagnostics != self.diagnostics else { return }
 
         sessions = found
         casualties = survivors
+        snapshots = found_snapshots
         self.diagnostics = diagnostics
         onChange?()
+    }
+
+    private func snapshot(for session: Session) -> TranscriptSnapshot {
+        let cached = transcriptCache[session.sessionId]
+        guard let url = cached?.url
+                ?? TranscriptReader.url(forSessionId: session.sessionId, projectsRoot: projectsRoot)
+        else { return TranscriptSnapshot() }
+
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let size = attributes?[.size] as? Int ?? 0
+        let modified = attributes?[.modificationDate] as? Date ?? .distantPast
+
+        if let cached, cached.size == size, cached.modified == modified {
+            return cached.snapshot
+        }
+
+        let fresh = TranscriptReader.snapshot(at: url)
+        transcriptCache[session.sessionId] = (url, size, modified, fresh)
+        return fresh
     }
 
     /// Drops every recorded failure. Red is an alert, so it has to be acknowledgeable.
@@ -118,7 +154,7 @@ public final class SessionWatcher {
                                        now: Date) -> [Casualty] {
         let surviving = Set(current.map(\.pid))
         return previous
-            .filter { $0.status == .busy && !surviving.contains($0.pid) }
+            .filter { $0.status.isWorking && !surviving.contains($0.pid) }
             .map { Casualty(pid: $0.pid, sessionId: $0.sessionId, folder: $0.folder, diedAt: now) }
     }
 
@@ -161,7 +197,7 @@ public final class SessionWatcher {
 
     /// Busy first, then most recently active, then by pid so ordering is stable.
     nonisolated static func displayOrder(_ a: Session, _ b: Session) -> Bool {
-        if (a.status == .busy) != (b.status == .busy) { return a.status == .busy }
+        if a.status.isWorking != b.status.isWorking { return a.status.isWorking }
         let left = a.statusUpdatedAt ?? .distantPast
         let right = b.statusUpdatedAt ?? .distantPast
         if left != right { return left > right }

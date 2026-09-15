@@ -21,18 +21,40 @@ public struct Session: Equatable, Identifiable, Sendable {
     }
 }
 
-/// Claude Code writes `busy` and `idle`. Anything else is kept verbatim rather
-/// than guessed at, and surfaces in diagnostics.
+/// The four statuses Claude Code validates when it reads a session file:
+/// `["busy", "shell", "idle", "waiting"]`.
+///
+/// Internally it tracks `running`/`requires_action`/`idle` and maps them on the
+/// way to disk — `requires_action` becomes `waiting`, and alongside it Claude Code
+/// writes a `waitingFor` of either "permission prompt" or "input needed". That is
+/// the blocked-versus-thinking distinction, already on disk, which is why this app
+/// needs no hooks to tell them apart.
+///
+/// Anything unrecognised is kept verbatim rather than guessed at, and surfaces in
+/// diagnostics.
 public enum SessionStatus: Equatable, Sendable {
     case busy
+    /// Running a shell command. Still working.
+    case shell
+    /// Blocked on you. The payload is Claude Code's own `waitingFor` description.
+    case waiting(String?)
     case idle
     case unknown(String)
 
-    public init(raw: String?) {
+    public init(raw: String?, waitingFor: String? = nil) {
         switch raw {
         case "busy": self = .busy
+        case "shell": self = .shell
+        case "waiting": self = .waiting(waitingFor)
         case "idle": self = .idle
         case let other: self = .unknown(other ?? "")
+        }
+    }
+
+    public var isWorking: Bool {
+        switch self {
+        case .busy, .shell: true
+        default: false
         }
     }
 }
@@ -77,10 +99,21 @@ extension Session {
     ///
     /// Nothing produces `.failed` yet; that needs hook events (milestone 3).
     public func bucket(now: Date = Date(),
-                       recentWindow: TimeInterval = Session.defaultRecentWindow) -> Bucket {
+                       recentWindow: TimeInterval = Session.defaultRecentWindow,
+                       snapshot: TranscriptSnapshot? = nil) -> Bucket {
+        // A fresh API error only counts as a failure if the session stopped at it.
+        // Still working means it retried and carried on — a 529 that resolved
+        // itself is history, and lighting red for it would cry wolf.
+        if let snapshot, snapshot.hasRecentError(now: now), !status.isWorking {
+            return .failed
+        }
+
         switch status {
-        case .busy:
+        case .busy, .shell:
             return .running
+        case .waiting:
+            // Blocked on you right now — the strongest attention signal there is.
+            return .attention
         case .idle:
             guard let finished = statusUpdatedAt,
                   now.timeIntervalSince(finished) < recentWindow else { return .idle }
@@ -125,7 +158,8 @@ public enum SessionDecoder {
             name: json["name"] as? String ?? URL(fileURLWithPath: cwd).lastPathComponent,
             kind: json["kind"] as? String ?? "unknown",
             version: json["version"] as? String ?? "unknown",
-            status: SessionStatus(raw: json["status"] as? String),
+            status: SessionStatus(raw: json["status"] as? String,
+                                  waitingFor: json["waitingFor"] as? String),
             startedAt: millisecondDate(json["startedAt"]),
             statusUpdatedAt: millisecondDate(json["statusUpdatedAt"])
         )
@@ -143,12 +177,14 @@ public enum SessionDecoder {
 extension LightState {
     public init(sessions: [Session],
                 casualties: [Casualty] = [],
+                snapshots: [String: TranscriptSnapshot] = [:],
                 now: Date = Date(),
                 recentWindow: TimeInterval = Session.defaultRecentWindow,
                 casualtyWindow: TimeInterval = Casualty.defaultWindow) {
         self.init()
         for session in sessions {
-            switch session.bucket(now: now, recentWindow: recentWindow) {
+            switch session.bucket(now: now, recentWindow: recentWindow,
+                                  snapshot: snapshots[session.sessionId]) {
             case .running: running += 1
             case .attention: attention += 1
             case .failed: failed += 1

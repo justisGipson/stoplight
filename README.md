@@ -23,30 +23,41 @@ opens the menu.
 
 ## Status
 
-**Milestone 3a of 5. All three lamps read live state.**
+**Milestones 1–4 of 5 done. All three lamps read live state; no hooks required.**
 
 What works today:
 
 - Live session monitoring via FSEvents on `~/.claude/sessions/`, with dead
   processes reaped
 - 🟢 green from `status: "busy"`
-- 🟡 yellow from a session that finished within the last 5 minutes, decaying back
-  to dark on a scheduled one-shot rather than a poll
-- 🔴 red from a session whose process vanished while it was still working
-- Hover panel listing every live session and recent failure: folder, state, age
+- 🟡 yellow from `status: "waiting"` — blocked on you right now — and from a
+  session that finished within the last 5 minutes, decaying back to dark on a
+  scheduled one-shot rather than a poll
+- 🔴 red from a session whose process vanished while it was still working, and
+  from a fresh API error that a session stalled on
+- Hover panel per session: folder, what it is doing, the running tool, context
+  size, age
 - Dismissing failures, and a diagnostics line, in the menu
-- 61 passing tests
+- 82 passing tests
 
-**What red does and does not catch.** Claude Code writes only `busy` and `idle` to
-disk, so there is no explicit failure signal to read. What is real is the
-transition: a session shutting down cleanly settles to `idle` first, so one that
-disappears straight out of `busy` was killed, crashed, or had its terminal closed
-mid-task. That is what lights red.
+**What red catches.** Two things, neither of them an explicit failure field,
+because Claude Code does not write one.
 
-It does not catch a failure a session *survives* — an API error it reports and
-then sits idle on, or a rate limit it is waiting out. Those look identical to a
-finished turn from outside the process, and need hook events to tell apart
-(milestone 3b).
+*A vanished session.* Shutting down cleanly settles to `idle` first, so a session
+that disappears straight out of `busy` or `shell` was killed, crashed, or had its
+terminal closed mid-task.
+
+*A stalled API error.* The transcript records `isApiErrorMessage` with an
+`apiErrorStatus` — a 429 rate limit, a 529 overload. That only counts as a failure
+if the session **stopped** at it; still working means it retried and carried on,
+and lighting red for a 529 that resolved itself would cry wolf.
+
+**Why there are no hooks.** An earlier plan installed Claude Code hooks to tell
+"blocked on a permission prompt" apart from "thinking". They turned out to be
+unnecessary: Claude Code maps its internal `requires_action` state to
+`status: "waiting"` on disk and writes a `waitingFor` of "permission prompt" or
+"input needed" next to it. The distinction is already there. Nothing gets written
+to your `settings.json`.
 
 ## Requirements
 
@@ -106,9 +117,11 @@ scraping or log tailing involved.
   and timestamps. Watching that one directory with FSEvents gives push-based
   updates and 0% idle CPU. Session files can outlive their process, so entries are
   reaped with `kill(pid, 0)`.
-- **Hooks** (`Notification`, `Stop`, `SessionEnd`) — not yet wired up. `status`
-  carries only `busy` and `idle`, so it cannot separate "thinking" from "blocked on
-  a permission prompt", and it reports no failures at all. Hooks supply both.
+- **`~/.claude/projects/<slug>/<sessionId>.jsonl`** — the transcript, read by a
+  bounded reverse scan (400 lines) for the running tool, the live context size and
+  the most recent API error. Everything needed lives near the tail, so a transcript
+  running to tens of thousands of lines is never fully parsed. Cached against file
+  size and mtime, so an unchanged transcript costs nothing.
 - **`~/.claude/projects/<slug>/<sessionId>.jsonl`** — live transcript, for token
   counts and the current tool name. Parsed lazily, only while the panel is open.
 - **`~/.claude/stats-cache.json`** — pre-aggregated daily counts, to backfill the
@@ -166,8 +179,8 @@ relayout and the downscaling blur together.
 
 1. ✅ Menu bar item, drawn lamps, hover/click split
 2. ✅ `SessionWatcher` on `~/.claude/sessions/` + liveness reaper → real green/yellow
-3. ✅ a. Crash detection: vanished-while-busy → red, dismissable
-   b. Hooks → distinguish blocked-mid-task from thinking, and catch survived
-      failures; opt-in install/uninstall flow
-4. Panel detail: current tool, token usage
-5. SQLite scoreboard + `stats-cache.json` backfill
+3. ✅ Crash detection, blocked-on-you from `status: "waiting"`, and stalled API
+   errors — all without hooks
+4. ✅ Panel detail: running tool, context size, failure reason
+5. SQLite scoreboard + `stats-cache.json` backfill (lifetime totals and cost need a
+   full transcript pass, which is why they are not in the hover panel)

@@ -80,7 +80,10 @@ public final class StatusItemController: NSObject {
 
     private func refreshState() {
         let now = Date()
-        state = LightState(sessions: watcher.sessions, casualties: watcher.casualties, now: now)
+        state = LightState(sessions: watcher.sessions,
+                           casualties: watcher.casualties,
+                           snapshots: watcher.snapshots,
+                           now: now)
         if hoverPanel.isVisible { layoutHoverPanel() }
         scheduleAttentionDecay(now: now)
     }
@@ -152,6 +155,7 @@ public final class StatusItemController: NSObject {
         let host = NSHostingView(rootView: PopoverView(state: state,
                                                        sessions: watcher.sessions,
                                                        casualties: watcher.casualties,
+                                                       snapshots: watcher.snapshots,
                                                        now: Date()))
         host.layout()
         let size = host.fittingSize

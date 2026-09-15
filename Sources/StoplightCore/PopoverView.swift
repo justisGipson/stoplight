@@ -5,6 +5,7 @@ struct PopoverView: View {
     let state: LightState
     let sessions: [Session]
     let casualties: [Casualty]
+    let snapshots: [String: TranscriptSnapshot]
     let now: Date
 
     var body: some View {
@@ -41,7 +42,8 @@ struct PopoverView: View {
     }
 
     private func row(for session: Session) -> some View {
-        let bucket = session.bucket(now: now)
+        let snapshot = snapshots[session.sessionId]
+        let bucket = session.bucket(now: now, snapshot: snapshot)
         return HStack(spacing: 7) {
             Circle()
                 .fill(Color(nsColor: color(for: bucket)))
@@ -52,7 +54,7 @@ struct PopoverView: View {
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.head)
-                Text(detail(for: session, bucket: bucket))
+                Text(detail(for: session, bucket: bucket, snapshot: snapshot))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -60,12 +62,24 @@ struct PopoverView: View {
 
             Spacer(minLength: 6)
 
-            if let age = session.age(now: now) {
-                Text(age)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+            VStack(alignment: .trailing, spacing: 1) {
+                if let age = session.age(now: now) {
+                    Text(age)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+                if let tokens = snapshot?.contextTokens {
+                    Text(compact(tokens))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
+    }
+
+    /// Context size, as a token count you can read at a glance.
+    private func compact(_ tokens: Int) -> String {
+        tokens >= 1000 ? String(format: "%.0fk", Double(tokens) / 1000) : "\(tokens)"
     }
 
     private func casualtyRow(for casualty: Casualty) -> some View {
@@ -110,12 +124,22 @@ struct PopoverView: View {
         }
     }
 
-    private func detail(for session: Session, bucket: Bucket) -> String {
+    private func detail(for session: Session,
+                        bucket: Bucket,
+                        snapshot: TranscriptSnapshot?) -> String {
         switch bucket {
-        case .running: "working"
-        case .attention: "waiting for you"
-        case .failed: "failed"
-        case .idle: "idle"
+        case .failed:
+            if let status = snapshot?.lastErrorStatus, status > 0 { return "API error \(status)" }
+            return "failed"
+        case .attention:
+            // Claude Code's own words: "permission prompt" or "input needed".
+            if case .waiting(let reason) = session.status, let reason { return reason }
+            return "finished — waiting for you"
+        case .running:
+            if let tool = snapshot?.currentTool { return "running \(tool)" }
+            return session.status == .shell ? "running a command" : "working"
+        case .idle:
+            return "idle"
         }
     }
 
