@@ -17,13 +17,16 @@ public struct ModelTotals: Equatable, Identifiable, Sendable {
     public var id: String { model }
 }
 
+/// No 30-day option on purpose. Claude Code prunes transcripts after
+/// `cleanupPeriodDays` (30 by default), so under stock settings a 30-day window
+/// and everything on disk are the same set — two controls that always agree.
+/// "All time" widens by itself if that setting is ever raised.
 public enum TimeRange: String, CaseIterable, Sendable {
-    case week, month, all
+    case week, all
 
     public var label: String {
         switch self {
         case .week: "7 days"
-        case .month: "30 days"
         case .all: "All time"
         }
     }
@@ -31,7 +34,6 @@ public enum TimeRange: String, CaseIterable, Sendable {
     public var days: Int? {
         switch self {
         case .week: 7
-        case .month: 30
         case .all: nil
         }
     }
@@ -61,6 +63,8 @@ public struct ScoreboardSummary: Equatable, Sendable {
     public var range: TimeRange = .all
     public var transcriptsSeen = 0
     public var transcriptsWithCost = 0
+    /// Oldest activity still on disk — the floor that retention has left behind.
+    public var earliestActivity: Date?
     /// Failures this app watched happen. Nothing on disk records these.
     public var crashes = 0
 
@@ -128,7 +132,9 @@ public enum ScoreboardBuilder {
 
             // A transcript with no cost-state line is a session too short to bill.
             guard let cost else { continue }
-            scanned.append(ScoredSession(cost: cost, lastActive: modified))
+            // The transcript's own last timestamp beats the file's mtime, which a
+            // copy or a backup can bump without any work having happened.
+            scanned.append(ScoredSession(cost: cost, lastActive: cost.lastActivity ?? modified))
         }
         return scanned
     }
@@ -147,6 +153,7 @@ public enum ScoreboardBuilder {
         var summary = ScoreboardSummary()
         summary.range = range
         summary.transcriptsSeen = totalTranscripts
+        summary.earliestActivity = scanned.map(\.lastActive).min()
 
         var projects: [String: ProjectTotals] = [:]
         var models: [String: ModelTotals] = [:]

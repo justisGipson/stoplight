@@ -24,6 +24,8 @@ public struct CostState: Equatable, Sendable, Codable {
     public var linesAdded = 0
     public var linesRemoved = 0
     public var startTime: Date?
+    /// Timestamp of the last entry in the transcript.
+    public var lastActivity: Date?
     public var modelUsage: [String: ModelUsage] = [:]
 
     public var totalTokens: Int { modelUsage.values.reduce(0) { $0 + $1.totalTokens } }
@@ -74,6 +76,7 @@ public enum CostStateReader {
         }
 
         state.folder = folder(in: data, notBefore: floor) ?? ""
+        state.lastActivity = lastActivity(in: data, notBefore: floor)
         return state
     }
 
@@ -86,6 +89,16 @@ public enum CostStateReader {
               let cwd = (object as? [String: Any])?["cwd"] as? String, !cwd.isEmpty
         else { return nil }
         return URL(fileURLWithPath: cwd).lastPathComponent
+    }
+
+    /// When the transcript was last written to, from its own contents.
+    static func lastActivity(in data: Data, notBefore floor: Data.Index) -> Date? {
+        guard let line = lastLine(containing: Array("\"timestamp\":\"".utf8),
+                                  in: data, notBefore: floor),
+              let object = try? JSONSerialization.jsonObject(with: line),
+              let stamp = (object as? [String: Any])?["timestamp"] as? String
+        else { return nil }
+        return TranscriptReader.date(stamp)
     }
 
     /// Last line containing `needle`, searching backwards.

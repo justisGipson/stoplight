@@ -219,16 +219,32 @@ private func scored(cost: Double, daysAgo: Double, folder: String = "alpha",
     #expect(summary.sessions == 1)
 }
 
-@Test func thirtyDaysIsWiderThanSeven() {
+@Test func allTimeIsWiderThanSevenDays() {
     let now = Date()
     let sessions = [scored(cost: 1, daysAgo: 2, now: now),
                     scored(cost: 10, daysAgo: 20, now: now)]
     let week = ScoreboardBuilder.summarize(sessions, crashes: [], range: .week,
                                            totalTranscripts: 2, now: now)
-    let month = ScoreboardBuilder.summarize(sessions, crashes: [], range: .month,
-                                            totalTranscripts: 2, now: now)
+    let all = ScoreboardBuilder.summarize(sessions, crashes: [], range: .all,
+                                          totalTranscripts: 2, now: now)
     #expect(week.totalCostUSD == 1)
-    #expect(month.totalCostUSD == 11)
+    #expect(all.totalCostUSD == 11)
+}
+
+@Test func onlyTwoRangesAreOffered() {
+    // A 30-day option would duplicate "all time" under Claude Code's default
+    // 30-day transcript retention.
+    #expect(TimeRange.allCases.map(\.label) == ["7 days", "All time"])
+}
+
+@Test func earliestActivityIsReportedRegardlessOfRange() {
+    // The retention floor has to show even when the range is narrower than it.
+    let now = Date()
+    let summary = ScoreboardBuilder.summarize(
+        [scored(cost: 1, daysAgo: 1, now: now), scored(cost: 1, daysAgo: 40, now: now)],
+        crashes: [], range: .week, totalTranscripts: 2, now: now)
+    #expect(summary.earliestActivity != nil)
+    #expect(now.timeIntervalSince(summary.earliestActivity!) > 39 * 86_400)
 }
 
 @Test func theRangeBoundaryIsInclusive() {

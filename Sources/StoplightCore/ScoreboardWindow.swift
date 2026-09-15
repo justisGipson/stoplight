@@ -230,6 +230,11 @@ struct ScoreboardView: View {
                 .font(scaled(10))
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            Text(retentionNote(summary))
+                .font(scaled(10))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
             if let stats = model.stats, let computed = stats.lastComputedDate {
                 // Claude Code's own cache lags, so never present it as current.
                 Text("Claude Code reports \(stats.totalSessions) sessions and "
@@ -239,6 +244,17 @@ struct ScoreboardView: View {
                     .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    /// "All time" means everything still on disk, which is not the same as
+    /// everything that ever happened.
+    private func retentionNote(_ summary: ScoreboardSummary) -> String {
+        guard let earliest = summary.earliestActivity else { return "" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d MMM yyyy"
+        return "Oldest surviving transcript: \(formatter.string(from: earliest)). Claude Code "
+             + "deletes older ones per cleanupPeriodDays (30 days unless you change it), so "
+             + "\"all time\" reaches back only that far."
     }
 
     // MARK: Formatting
