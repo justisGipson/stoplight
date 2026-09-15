@@ -102,8 +102,13 @@ jobs:
           Opened automatically. Push more to \`main\` and this PR and its version
           will update themselves."
 
-          if gh pr view release/next --json number >/dev/null 2>&1; then
-            gh pr edit release/next --title "release v$VERSION" --body "$BODY"
+          # Must be an OPEN pr: `gh pr view <branch>` also matches merged ones, and
+          # editing a merged PR silently renames history instead of opening the
+          # next release.
+          OPEN="$(gh pr list --head release/next --state open --json number -q '.[0].number')"
+
+          if [ -n "$OPEN" ]; then
+            gh pr edit "$OPEN" --title "release v$VERSION" --body "$BODY"
           elif ! gh pr create --base main --head release/next \
                  --title "release v$VERSION" --body "$BODY"; then
             # The branch is pushed either way, so a blocked PR is recoverable by
