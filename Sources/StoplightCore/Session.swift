@@ -37,6 +37,34 @@ public enum SessionStatus: Equatable, Sendable {
     }
 }
 
+/// A session whose process vanished while it was still working.
+///
+/// A session shutting down cleanly goes `idle` first, so disappearing straight out
+/// of `busy` means it was killed, crashed, or had its terminal closed mid-task.
+/// That is the only failure signal available without hook events, and it is a real
+/// one — but it is inherently a memory: the process is gone and its file with it,
+/// so the casualty is held here until it expires or is dismissed.
+public struct Casualty: Equatable, Identifiable, Sendable {
+    public let pid: pid_t
+    public let sessionId: String
+    public let folder: String
+    public let diedAt: Date
+
+    public var id: pid_t { pid }
+
+    public func expiry(window: TimeInterval = Casualty.defaultWindow) -> Date {
+        diedAt.addingTimeInterval(window)
+    }
+
+    public func isActive(now: Date = Date(), window: TimeInterval = Casualty.defaultWindow) -> Bool {
+        expiry(window: window) > now
+    }
+
+    /// Longer than the attention window: a crash you missed because you stepped
+    /// away still deserves to be on screen when you get back.
+    public static let defaultWindow: TimeInterval = 1800
+}
+
 /// Which lamp a session contributes to.
 public enum Bucket: Equatable, Sendable {
     case failed, attention, running, idle
@@ -114,8 +142,10 @@ public enum SessionDecoder {
 
 extension LightState {
     public init(sessions: [Session],
+                casualties: [Casualty] = [],
                 now: Date = Date(),
-                recentWindow: TimeInterval = Session.defaultRecentWindow) {
+                recentWindow: TimeInterval = Session.defaultRecentWindow,
+                casualtyWindow: TimeInterval = Casualty.defaultWindow) {
         self.init()
         for session in sessions {
             switch session.bucket(now: now, recentWindow: recentWindow) {
@@ -125,6 +155,7 @@ extension LightState {
             case .idle: break
             }
         }
+        failed += casualties.filter { $0.isActive(now: now, window: casualtyWindow) }.count
     }
 }
 

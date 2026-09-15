@@ -33,6 +33,7 @@ public struct SessionDiagnostics: Equatable, Sendable {
 @MainActor
 public final class SessionWatcher {
     public private(set) var sessions: [Session] = []
+    public private(set) var casualties: [Casualty] = []
     public private(set) var diagnostics = SessionDiagnostics()
     public var onChange: (() -> Void)?
 
@@ -85,12 +86,40 @@ public final class SessionWatcher {
         self.stream = nil
     }
 
-    public func reload() {
+    public func reload(now: Date = Date()) {
         let (found, diagnostics) = Self.scan(directory: directory)
-        guard found != sessions || diagnostics != self.diagnostics else { return }
+
+        var survivors = casualties.filter { $0.isActive(now: now) }
+        for casualty in Self.casualties(previous: sessions, current: found, now: now)
+        where !survivors.contains(where: { $0.pid == casualty.pid }) {
+            survivors.append(casualty)
+        }
+
+        guard found != sessions
+           || survivors != casualties
+           || diagnostics != self.diagnostics else { return }
+
         sessions = found
+        casualties = survivors
         self.diagnostics = diagnostics
         onChange?()
+    }
+
+    /// Drops every recorded failure. Red is an alert, so it has to be acknowledgeable.
+    public func dismissCasualties() {
+        guard !casualties.isEmpty else { return }
+        casualties = []
+        onChange?()
+    }
+
+    /// Sessions present last time, gone now, and working when last seen.
+    nonisolated static func casualties(previous: [Session],
+                                       current: [Session],
+                                       now: Date) -> [Casualty] {
+        let surviving = Set(current.map(\.pid))
+        return previous
+            .filter { $0.status == .busy && !surviving.contains($0.pid) }
+            .map { Casualty(pid: $0.pid, sessionId: $0.sessionId, folder: $0.folder, diedAt: now) }
     }
 
     /// Hand it a directory, get back what is in it. Kept free of instance state and

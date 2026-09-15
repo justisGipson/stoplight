@@ -80,7 +80,7 @@ public final class StatusItemController: NSObject {
 
     private func refreshState() {
         let now = Date()
-        state = LightState(sessions: watcher.sessions, now: now)
+        state = LightState(sessions: watcher.sessions, casualties: watcher.casualties, now: now)
         if hoverPanel.isVisible { layoutHoverPanel() }
         scheduleAttentionDecay(now: now)
     }
@@ -91,10 +91,9 @@ public final class StatusItemController: NSObject {
         decayTask?.cancel()
         decayTask = nil
 
-        let next = watcher.sessions
-            .compactMap { $0.attentionExpiry() }
-            .filter { $0 > now }
-            .min()
+        let expiries = watcher.sessions.compactMap { $0.attentionExpiry() }
+                     + watcher.casualties.map { $0.expiry() }
+        let next = expiries.filter { $0 > now }.min()
         guard let next else { return }
 
         decayTask = Task { @MainActor [weak self] in
@@ -152,6 +151,7 @@ public final class StatusItemController: NSObject {
         guard let button = statusItem.button, let window = button.window else { return }
         let host = NSHostingView(rootView: PopoverView(state: state,
                                                        sessions: watcher.sessions,
+                                                       casualties: watcher.casualties,
                                                        now: Date()))
         host.layout()
         let size = host.fittingSize
@@ -175,6 +175,10 @@ public final class StatusItemController: NSObject {
                           in: button)
     }
 
+    @objc private func dismissFailures() {
+        watcher.dismissCasualties()
+    }
+
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
 
@@ -182,6 +186,16 @@ public final class StatusItemController: NSObject {
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(.separator())
+
+        if !watcher.casualties.isEmpty {
+            let count = watcher.casualties.count
+            let dismiss = NSMenuItem(
+                title: "Dismiss \(count) failure\(count == 1 ? "" : "s")",
+                action: #selector(dismissFailures), keyEquivalent: "")
+            dismiss.target = self
+            menu.addItem(dismiss)
+            menu.addItem(.separator())
+        }
 
         let diagnostics = NSMenuItem(title: watcher.diagnostics.summary,
                                      action: nil, keyEquivalent: "")

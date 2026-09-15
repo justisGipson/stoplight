@@ -101,3 +101,87 @@ private func dead(_: pid_t) -> Bool { false }
 @Test func anImpossiblePidCountsAsDead() {
     #expect(SessionWatcher.processExists(pid_t(Int32.max)) == false)
 }
+
+// MARK: - End to end
+
+/// Uses this test process's own pid so the liveness check genuinely passes, then
+/// removes the file to simulate the process going away mid-task.
+@Test @MainActor func watcherRecordsACasualtyAcrossReloads() throws {
+    let pid = getpid()
+    let directory = try fixture([
+        "\(pid).json": #"{"pid":\#(pid),"sessionId":"a","status":"busy","cwd":"/Users/x/dev/proj"}"#
+    ])
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let watcher = SessionWatcher(directory: directory)
+    var notifications = 0
+    watcher.onChange = { notifications += 1 }
+
+    watcher.reload()
+    #expect(watcher.sessions.count == 1)
+    #expect(watcher.casualties.isEmpty)
+    #expect(notifications == 1)
+
+    try FileManager.default.removeItem(at: directory.appending(path: "\(pid).json"))
+    watcher.reload()
+
+    #expect(watcher.sessions.isEmpty)
+    #expect(watcher.casualties.count == 1)
+    #expect(watcher.casualties.first?.folder == "proj")
+    #expect(notifications == 2)
+}
+
+@Test @MainActor func aCasualtyIsRecordedOnlyOnce() throws {
+    let pid = getpid()
+    let directory = try fixture([
+        "\(pid).json": #"{"pid":\#(pid),"sessionId":"a","status":"busy","cwd":"/Users/x/dev/proj"}"#
+    ])
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let watcher = SessionWatcher(directory: directory)
+    watcher.reload()
+    try FileManager.default.removeItem(at: directory.appending(path: "\(pid).json"))
+
+    watcher.reload()
+    watcher.reload()
+    watcher.reload()
+
+    #expect(watcher.casualties.count == 1)
+}
+
+@Test @MainActor func reloadingAnUnchangedDirectoryDoesNotNotify() throws {
+    // onChange drives a redraw; firing it on every FSEvent tick would repaint the
+    // menu bar for nothing.
+    let pid = getpid()
+    let directory = try fixture([
+        "\(pid).json": #"{"pid":\#(pid),"sessionId":"a","status":"busy"}"#
+    ])
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let watcher = SessionWatcher(directory: directory)
+    var notifications = 0
+    watcher.onChange = { notifications += 1 }
+
+    watcher.reload()
+    watcher.reload()
+    watcher.reload()
+
+    #expect(notifications == 1)
+}
+
+@Test @MainActor func dismissingClearsRecordedFailures() throws {
+    let pid = getpid()
+    let directory = try fixture([
+        "\(pid).json": #"{"pid":\#(pid),"sessionId":"a","status":"busy"}"#
+    ])
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let watcher = SessionWatcher(directory: directory)
+    watcher.reload()
+    try FileManager.default.removeItem(at: directory.appending(path: "\(pid).json"))
+    watcher.reload()
+    #expect(watcher.casualties.count == 1)
+
+    watcher.dismissCasualties()
+    #expect(watcher.casualties.isEmpty)
+}

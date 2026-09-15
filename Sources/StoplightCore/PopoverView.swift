@@ -4,6 +4,7 @@ import SwiftUI
 struct PopoverView: View {
     let state: LightState
     let sessions: [Session]
+    let casualties: [Casualty]
     let now: Date
 
     var body: some View {
@@ -15,7 +16,7 @@ struct PopoverView: View {
                 Text(state.summary)
                     .font(.system(size: 13, weight: .semibold))
 
-                if sessions.isEmpty {
+                if sessions.isEmpty && casualties.isEmpty {
                     Text("No Claude Code sessions running")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
@@ -23,6 +24,9 @@ struct PopoverView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(sessions) { session in
                             row(for: session)
+                        }
+                        ForEach(casualties.filter { $0.isActive(now: now) }) { casualty in
+                            casualtyRow(for: casualty)
                         }
                     }
                 }
@@ -61,6 +65,39 @@ struct PopoverView: View {
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.tertiary)
             }
+        }
+    }
+
+    private func casualtyRow(for casualty: Casualty) -> some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(Color(nsColor: StoplightIcon.litColor(.red)))
+                .frame(width: 7, height: 7)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(casualty.folder)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                Text("stopped while working")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 6)
+
+            Text(age(since: casualty.diedAt))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func age(since date: Date) -> String {
+        let seconds = max(0, now.timeIntervalSince(date))
+        switch seconds {
+        case ..<60: return "\(Int(seconds))s"
+        case ..<3600: return "\(Int(seconds / 60))m"
+        default: return "\(Int(seconds / 3600))h"
         }
     }
 

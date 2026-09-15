@@ -23,7 +23,7 @@ opens the menu.
 
 ## Status
 
-**Milestone 2 of 5. Reads live session state; the red lamp is not wired up yet.**
+**Milestone 3a of 5. All three lamps read live state.**
 
 What works today:
 
@@ -32,14 +32,21 @@ What works today:
 - 🟢 green from `status: "busy"`
 - 🟡 yellow from a session that finished within the last 5 minutes, decaying back
   to dark on a scheduled one-shot rather than a poll
-- Hover panel listing every live session: folder, state and age
-- Diagnostics line in the menu
-- 47 passing tests
+- 🔴 red from a session whose process vanished while it was still working
+- Hover panel listing every live session and recent failure: folder, state, age
+- Dismissing failures, and a diagnostics line, in the menu
+- 61 passing tests
 
-**The red lamp never lights yet.** Claude Code writes only `busy` and `idle` to
-disk — there is no failure signal there to read. Detecting a crash, an error or a
-hit rate limit needs hook events, which is milestone 3. Until then red stays dark
-rather than being faked from something it does not mean.
+**What red does and does not catch.** Claude Code writes only `busy` and `idle` to
+disk, so there is no explicit failure signal to read. What is real is the
+transition: a session shutting down cleanly settles to `idle` first, so one that
+disappears straight out of `busy` was killed, crashed, or had its terminal closed
+mid-task. That is what lights red.
+
+It does not catch a failure a session *survives* — an API error it reports and
+then sits idle on, or a rate limit it is waiting out. Those look identical to a
+finished turn from outside the process, and need hook events to tell apart
+(milestone 3b).
 
 ## Requirements
 
@@ -159,6 +166,8 @@ relayout and the downscaling blur together.
 
 1. ✅ Menu bar item, drawn lamps, hover/click split
 2. ✅ `SessionWatcher` on `~/.claude/sessions/` + liveness reaper → real green/yellow
-3. Hooks → red, and yellow while blocked mid-task; install/uninstall flow
+3. ✅ a. Crash detection: vanished-while-busy → red, dismissable
+   b. Hooks → distinguish blocked-mid-task from thinking, and catch survived
+      failures; opt-in install/uninstall flow
 4. Panel detail: current tool, token usage
 5. SQLite scoreboard + `stats-cache.json` backfill
