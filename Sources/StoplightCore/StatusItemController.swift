@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import QuartzCore
+import Combine
 
 /// Owns the menu bar item and the two gestures it has to serve.
 ///
@@ -32,6 +33,12 @@ public final class StatusItemController: NSObject {
 
     private let watcher = SessionWatcher()
     private let scoreboard = ScoreboardWindowController()
+    private let settings = Settings.shared
+    private lazy var settingsWindow = SettingsWindowController(settings: settings)
+    private var settingsObserver: AnyCancellable?
+    /// Watches the pointer while the panel is up, so moving from the icon onto the
+    /// panel keeps it open and moving away anywhere else closes it.
+    private var mouseMonitor: Any?
     /// Fires exactly when the next just-finished session stops counting as
     /// attention. A one-shot rather than a poll, so idle cost stays at zero.
     private var decayTask: Task<Void, Never>?
@@ -53,7 +60,7 @@ public final class StatusItemController: NSObject {
         panel.isOpaque = false
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
-        panel.ignoresMouseEvents = true      // hover detail only; never intercepts clicks
+        panel.ignoresMouseEvents = false     // rows are clickable
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         return panel
     }()
@@ -77,7 +84,20 @@ public final class StatusItemController: NSObject {
         watcher.onChange = { [weak self] in self?.refreshState() }
         watcher.start()
         refreshState()
+        settingsObserver = settings.objectWillChange.sink { [weak self] in
+            Task { @MainActor in self?.applySettings() }
+        }
+        applySettings()
         render()
+    }
+
+    private func applySettings() {
+        // Only the app's own surfaces follow this. The status item keeps the system
+        // appearance: it is drawn onto the real menu bar, and forcing light artwork
+        // onto a dark bar would make it invisible.
+        hoverPanel.appearance = settings.appearance.nsAppearance
+        settingsWindow.applyAppearance()
+        if hoverPanel.isVisible { layoutHoverPanel() }
     }
 
     // MARK: - State
@@ -158,22 +178,56 @@ public final class StatusItemController: NSObject {
 
     @objc(mouseExited:) func mouseExited(with event: NSEvent) {
         hoverTask?.cancel()
-        hoverTask = nil
-        hoverPanel.orderOut(nil)
+        // Leaving the icon may just mean heading for the panel, so give the pointer
+        // a moment to arrive before deciding.
+        hoverTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(160))
+            guard !Task.isCancelled else { return }
+            self?.closePanelIfPointerLeft()
+        }
     }
 
     private func showHoverPanel() {
         layoutHoverPanel()
         hoverPanel.orderFrontRegardless()   // visible without activating the app
+        guard mouseMonitor == nil else { return }
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { _ in
+            MainActor.assumeIsolated { self.closePanelIfPointerLeft() }
+        }
+    }
+
+    private func hideHoverPanel() {
+        hoverPanel.orderOut(nil)
+        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+        mouseMonitor = nil
+    }
+
+    /// The panel and the icon are separate surfaces with a gap between them, so
+    /// neither one's own tracking can decide this alone.
+    private func closePanelIfPointerLeft() {
+        guard hoverPanel.isVisible else { return }
+        let pointer = NSEvent.mouseLocation
+        if hoverPanel.frame.insetBy(dx: -10, dy: -10).contains(pointer) { return }
+        if let button = statusItem.button, let window = button.window {
+            let onScreen = window.convertToScreen(button.convert(button.bounds, to: nil))
+            if onScreen.insetBy(dx: -10, dy: -10).contains(pointer) { return }
+        }
+        hideHoverPanel()
     }
 
     private func layoutHoverPanel() {
         guard let button = statusItem.button, let window = button.window else { return }
-        let host = NSHostingView(rootView: PopoverView(state: state,
-                                                       sessions: watcher.sessions,
-                                                       casualties: watcher.casualties,
-                                                       snapshots: watcher.snapshots,
-                                                       now: Date()))
+        let host = NSHostingView(rootView: PopoverView(
+            state: state,
+            sessions: watcher.sessions,
+            casualties: watcher.casualties,
+            snapshots: watcher.snapshots,
+            now: Date(),
+            fontScale: settings.fontScale.factor,
+            onSelect: { [weak self] session in
+                SessionFocus.focus(sessionPid: session.pid)
+                self?.hideHoverPanel()
+            }))
         host.layout()
         let size = host.fittingSize
         hoverPanel.contentView = host
@@ -188,12 +242,21 @@ public final class StatusItemController: NSObject {
 
     @objc private func buttonClicked() {
         hoverTask?.cancel()
-        hoverPanel.orderOut(nil)
+        hideHoverPanel()
 
         guard let button = statusItem.button else { return }
         buildMenu().popUp(positioning: nil,
                           at: NSPoint(x: 0, y: button.bounds.height + 4),
                           in: button)
+    }
+
+    @objc private func focusSession(_ item: NSMenuItem) {
+        guard let pid = item.representedObject as? pid_t else { return }
+        SessionFocus.focus(sessionPid: pid)
+    }
+
+    @objc private func showSettings() {
+        settingsWindow.show()
     }
 
     @objc private func showScoreboard() {
@@ -212,6 +275,18 @@ public final class StatusItemController: NSObject {
         menu.addItem(header)
         menu.addItem(.separator())
 
+        for session in watcher.sessions {
+            let owner = SessionFocus.name(forSessionPid: session.pid)
+            let item = NSMenuItem(
+                title: owner.map { "\(session.folder) — \($0)" } ?? session.folder,
+                action: #selector(focusSession(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = session.pid
+            item.isEnabled = owner != nil
+            menu.addItem(item)
+        }
+        if !watcher.sessions.isEmpty { menu.addItem(.separator()) }
+
         if !watcher.casualties.isEmpty {
             let count = watcher.casualties.count
             let dismiss = NSMenuItem(
@@ -221,6 +296,11 @@ public final class StatusItemController: NSObject {
             menu.addItem(dismiss)
             menu.addItem(.separator())
         }
+
+        let preferences = NSMenuItem(title: "Settings…",
+                                     action: #selector(showSettings), keyEquivalent: ",")
+        preferences.target = self
+        menu.addItem(preferences)
 
         let usage = NSMenuItem(title: "Usage & Scoreboard…",
                                action: #selector(showScoreboard), keyEquivalent: "")

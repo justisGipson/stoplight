@@ -58,6 +58,28 @@ public final class Settings: ObservableObject {
         didSet { defaults.set(fontScale.rawValue, forKey: Keys.fontScale) }
     }
 
+    /// Not stored here — it lives in `~/.claude/settings.json`, because Claude Code
+    /// is what reads it. This mirrors the file so the UI can show and change it.
+    @Published public var provider: ClaudeProvider = .anthropic
+    @Published public var providerMessage: String?
+
+    public func loadProvider() {
+        provider = ClaudeSettingsFile.provider()
+    }
+
+    public func applyProvider(_ new: ClaudeProvider) {
+        switch ClaudeSettingsFile.setProvider(new) {
+        case .unchanged:
+            providerMessage = nil
+        case .written(let backup):
+            providerMessage = "Saved. Applies to new sessions; existing ones keep their provider. "
+                            + "Previous settings backed up to \(backup)."
+        case .failed(let reason):
+            providerMessage = "Could not update settings.json — \(reason)."
+        }
+        provider = ClaudeSettingsFile.provider()
+    }
+
     private enum Keys {
         static let appearance = "appearance"
         static let fontScale = "fontScale"
@@ -73,6 +95,8 @@ public final class Settings: ObservableObject {
                  ?? .medium
     }
 
+    /// Resets this app's own preferences. Deliberately does not touch the
+    /// provider, which lives in Claude Code's config rather than ours.
     public func reset() {
         appearance = .system
         fontScale = .medium

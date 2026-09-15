@@ -11,19 +11,22 @@ final class SettingsWindowController {
     }
 
     func show() {
+        settings.loadProvider()
         if let window {
+            window.appearance = settings.appearance.nsAppearance
             NSApp.activate()
             window.makeKeyAndOrderFront(nil)
             return
         }
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 260),
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 430),
             styleMask: [.titled, .closable],
             backing: .buffered, defer: false)
         window.title = "Stoplight Settings"
         window.contentView = NSHostingView(rootView: SettingsView(settings: settings))
         window.isReleasedWhenClosed = false
+        window.appearance = settings.appearance.nsAppearance
         window.center()
         self.window = window
 
@@ -62,6 +65,19 @@ struct SettingsView: View {
                 .labelsHidden()
             }
 
+            row("Provider",
+                note: settings.providerMessage
+                    ?? "\(settings.provider.note) Claude Code reads this at launch, so a "
+                     + "change applies to new sessions.") {
+                Picker("", selection: Binding(
+                    get: { settings.provider },
+                    set: { settings.applyProvider($0) })) {
+                    ForEach(ClaudeProvider.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+            }
+
             Spacer()
 
             HStack {
@@ -71,7 +87,7 @@ struct SettingsView: View {
             }
         }
         .padding(20)
-        .frame(width: 380, height: 260, alignment: .topLeading)
+        .frame(width: 400, height: 430, alignment: .topLeading)
     }
 
     private func row<Content: View>(_ title: String,

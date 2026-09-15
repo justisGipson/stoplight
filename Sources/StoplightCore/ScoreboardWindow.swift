@@ -39,6 +39,7 @@ final class ScoreboardWindowController {
         model.load()
 
         if let window {
+            window.appearance = Settings.shared.appearance.nsAppearance
             NSApp.activate()
             window.makeKeyAndOrderFront(nil)
             return
@@ -49,7 +50,9 @@ final class ScoreboardWindowController {
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         window.title = "Stoplight — Usage"
-        window.contentView = NSHostingView(rootView: ScoreboardView(model: model))
+        window.contentView = NSHostingView(
+            rootView: ScoreboardView(model: model, settings: Settings.shared))
+        window.appearance = Settings.shared.appearance.nsAppearance
         window.isReleasedWhenClosed = false
         window.center()
         self.window = window
@@ -63,6 +66,9 @@ final class ScoreboardWindowController {
 
 struct ScoreboardView: View {
     @ObservedObject var model: ScoreboardModel
+    @ObservedObject var settings: Settings
+
+    private var fontScale: Double { settings.fontScale.factor }
 
     /// One hue for magnitude. These bars are a single series, so there is no
     /// categorical palette to assign and nothing for colour to identify —
@@ -84,11 +90,11 @@ struct ScoreboardView: View {
                     footer(summary)
                 } else if model.isLoading {
                     Text("Reading transcripts…")
-                        .font(.system(size: 12))
+                        .font(scaled(12))
                         .foregroundStyle(.secondary)
                 } else {
                     Text("No usage data found in ~/.claude/projects")
-                        .font(.system(size: 12))
+                        .font(scaled(12))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -112,12 +118,12 @@ struct ScoreboardView: View {
     private func tile(_ value: String, _ label: String, warn: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value)
-                .font(.system(size: 24, weight: .medium, design: .rounded))
+                .font(scaled(24, .medium, .rounded))
                 // Status colour is reserved and never stands alone — the word
                 // "crashed" underneath is what actually carries the meaning.
                 .foregroundStyle(warn ? Color(nsColor: StoplightIcon.litColor(.red)) : .primary)
             Text(label)
-                .font(.system(size: 10))
+                .font(scaled(10))
                 .foregroundStyle(.secondary)
         }
     }
@@ -129,12 +135,12 @@ struct ScoreboardView: View {
         let peak = rows.map(\.value).max() ?? 0
         return VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
+                .font(scaled(11, .semibold))
                 .foregroundStyle(.secondary)
 
             if rows.isEmpty {
                 Text("nothing recorded yet")
-                    .font(.system(size: 11))
+                    .font(scaled(11))
                     .foregroundStyle(.tertiary)
             } else {
                 VStack(alignment: .leading, spacing: 9) {
@@ -142,17 +148,17 @@ struct ScoreboardView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(alignment: .firstTextBaseline) {
                                 Text(row.name)
-                                    .font(.system(size: 12))
+                                    .font(scaled(12))
                                     .lineLimit(1)
                                 Spacer(minLength: 12)
                                 // Values wear text ink, never the bar's colour.
                                 Text(currency(row.value))
-                                    .font(.system(size: 11, design: .monospaced))
+                                    .font(scaled(11, .regular, .monospaced))
                                     .foregroundStyle(.secondary)
                             }
                             bar(fraction: peak > 0 ? row.value / peak : 0)
                             Text(row.detail)
-                                .font(.system(size: 9))
+                                .font(scaled(9))
                                 .foregroundStyle(.tertiary)
                         }
                     }
@@ -183,23 +189,31 @@ struct ScoreboardView: View {
             Divider()
             Text("\(summary.linesAdded) lines added · \(summary.linesRemoved) removed · "
                + "\(duration(summary.toolTimeMs)) in tools")
-                .font(.system(size: 10))
+                .font(scaled(10))
                 .foregroundStyle(.secondary)
             Text("\(summary.transcriptsWithCost) of \(summary.transcriptsSeen) transcripts carry cost data")
-                .font(.system(size: 10))
+                .font(scaled(10))
                 .foregroundStyle(.tertiary)
             if let stats = model.stats, let computed = stats.lastComputedDate {
                 // Claude Code's own cache lags, so never present it as current.
                 Text("Claude Code reports \(stats.totalSessions) sessions and "
                    + "\(stats.totalMessages) messages, last recomputed \(computed)"
                    + (stats.isStale ? " — stale" : ""))
-                    .font(.system(size: 10))
+                    .font(scaled(10))
                     .foregroundStyle(.tertiary)
             }
         }
     }
 
     // MARK: Formatting
+
+
+    /// Every size in this view is multiplied by the user's text-size setting.
+    private func scaled(_ size: CGFloat,
+                        _ weight: Font.Weight = .regular,
+                        _ design: Font.Design = .default) -> Font {
+        .system(size: size * fontScale, weight: weight, design: design)
+    }
 
     private func currency(_ value: Double) -> String {
         value >= 100 ? String(format: "$%.0f", value) : String(format: "$%.2f", value)

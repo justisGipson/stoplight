@@ -7,6 +7,8 @@ struct PopoverView: View {
     let casualties: [Casualty]
     let snapshots: [String: TranscriptSnapshot]
     let now: Date
+    let fontScale: Double
+    let onSelect: (Session) -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
@@ -15,16 +17,19 @@ struct PopoverView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text(state.summary)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(scaled(13, .semibold))
 
                 if sessions.isEmpty && casualties.isEmpty {
                     Text("No Claude Code sessions running")
-                        .font(.system(size: 11))
+                        .font(scaled(11))
                         .foregroundStyle(.secondary)
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(sessions) { session in
                             row(for: session)
+                                .contentShape(Rectangle())
+                                .onTapGesture { onSelect(session) }
+                                .help("Bring this session's window to the front")
                         }
                         ForEach(casualties.filter { $0.isActive(now: now) }) { casualty in
                             casualtyRow(for: casualty)
@@ -32,7 +37,7 @@ struct PopoverView: View {
                     }
                 }
             }
-            .frame(width: 230, alignment: .leading)
+            .frame(width: 230 * fontScale, alignment: .leading)
         }
         .padding(14)
         .background(
@@ -51,11 +56,11 @@ struct PopoverView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(session.folder)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(scaled(12, .medium))
                     .lineLimit(1)
                     .truncationMode(.head)
                 Text(detail(for: session, bucket: bucket, snapshot: snapshot))
-                    .font(.system(size: 10))
+                    .font(scaled(10))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -65,12 +70,12 @@ struct PopoverView: View {
             VStack(alignment: .trailing, spacing: 1) {
                 if let age = session.age(now: now) {
                     Text(age)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(scaled(10, .regular, .monospaced))
                         .foregroundStyle(.tertiary)
                 }
                 if let tokens = snapshot?.contextTokens {
                     Text(compact(tokens))
-                        .font(.system(size: 9, design: .monospaced))
+                        .font(scaled(9, .regular, .monospaced))
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -78,6 +83,14 @@ struct PopoverView: View {
     }
 
     /// Context size, as a token count you can read at a glance.
+
+    /// Every size in this view is multiplied by the user's text-size setting.
+    private func scaled(_ size: CGFloat,
+                        _ weight: Font.Weight = .regular,
+                        _ design: Font.Design = .default) -> Font {
+        .system(size: size * fontScale, weight: weight, design: design)
+    }
+
     private func compact(_ tokens: Int) -> String {
         tokens >= 1000 ? String(format: "%.0fk", Double(tokens) / 1000) : "\(tokens)"
     }
@@ -90,18 +103,18 @@ struct PopoverView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(casualty.folder)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(scaled(12, .medium))
                     .lineLimit(1)
                     .truncationMode(.head)
                 Text("stopped while working")
-                    .font(.system(size: 10))
+                    .font(scaled(10))
                     .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 6)
 
             Text(age(since: casualty.diedAt))
-                .font(.system(size: 10, design: .monospaced))
+                .font(scaled(10, .regular, .monospaced))
                 .foregroundStyle(.tertiary)
         }
     }
@@ -150,7 +163,7 @@ struct PopoverView: View {
                     .fill(Color(nsColor: state.count(lamp) > 0
                                 ? StoplightIcon.litColor(lamp)
                                 : StoplightIcon.unlitColor))
-                    .frame(width: 22, height: 22)
+                    .frame(width: 22 * fontScale, height: 22 * fontScale)
             }
         }
         .padding(6)
