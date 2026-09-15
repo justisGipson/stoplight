@@ -24,17 +24,18 @@ struct PopoverView: View {
                         .font(scaled(11))
                         .foregroundStyle(.secondary)
                 } else {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 2) {
                         ForEach(sessions) { session in
-                            row(for: session)
-                                .contentShape(Rectangle())
-                                .onTapGesture { onSelect(session) }
-                                .help("Bring this session's window to the front")
+                            HoverRow(action: { onSelect(session) },
+                                     hint: "Bring this session's terminal to the front") {
+                                sessionRow(session)
+                            }
                         }
                         ForEach(casualties.filter { $0.isActive(now: now) }) { casualty in
-                            casualtyRow(for: casualty)
+                            HoverRow(action: nil, hint: nil) { casualtyRow(casualty) }
                         }
                     }
+                    .padding(.horizontal, -6)
                 }
             }
             .frame(width: 230 * fontScale, alignment: .leading)
@@ -46,7 +47,9 @@ struct PopoverView: View {
         )
     }
 
-    private func row(for session: Session) -> some View {
+    // MARK: - Rows
+
+    private func sessionRow(_ session: Session) -> some View {
         let snapshot = snapshots[session.sessionId]
         let bucket = session.bucket(now: now, snapshot: snapshot)
         return HStack(spacing: 7) {
@@ -82,20 +85,7 @@ struct PopoverView: View {
         }
     }
 
-    /// Context size, as a token count you can read at a glance.
-
-    /// Every size in this view is multiplied by the user's text-size setting.
-    private func scaled(_ size: CGFloat,
-                        _ weight: Font.Weight = .regular,
-                        _ design: Font.Design = .default) -> Font {
-        .system(size: size * fontScale, weight: weight, design: design)
-    }
-
-    private func compact(_ tokens: Int) -> String {
-        tokens >= 1000 ? String(format: "%.0fk", Double(tokens) / 1000) : "\(tokens)"
-    }
-
-    private func casualtyRow(for casualty: Casualty) -> some View {
+    private func casualtyRow(_ casualty: Casualty) -> some View {
         HStack(spacing: 7) {
             Circle()
                 .fill(Color(nsColor: StoplightIcon.litColor(.red)))
@@ -119,13 +109,23 @@ struct PopoverView: View {
         }
     }
 
-    private func age(since date: Date) -> String {
-        let seconds = max(0, now.timeIntervalSince(date))
-        switch seconds {
-        case ..<60: return "\(Int(seconds))s"
-        case ..<3600: return "\(Int(seconds / 60))m"
-        default: return "\(Int(seconds / 3600))h"
+    // MARK: - Pieces
+
+    private var upright: some View {
+        VStack(spacing: 5) {
+            ForEach(Lamp.allCases, id: \.self) { lamp in
+                Circle()
+                    .fill(Color(nsColor: state.count(lamp) > 0
+                                ? StoplightIcon.litColor(lamp)
+                                : StoplightIcon.unlitColor))
+                    .frame(width: 22 * fontScale, height: 22 * fontScale)
+            }
         }
+        .padding(6)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: StoplightIcon.housingColor))
+        )
     }
 
     private func color(for bucket: Bucket) -> NSColor {
@@ -156,20 +156,54 @@ struct PopoverView: View {
         }
     }
 
-    private var upright: some View {
-        VStack(spacing: 5) {
-            ForEach(Lamp.allCases, id: \.self) { lamp in
-                Circle()
-                    .fill(Color(nsColor: state.count(lamp) > 0
-                                ? StoplightIcon.litColor(lamp)
-                                : StoplightIcon.unlitColor))
-                    .frame(width: 22 * fontScale, height: 22 * fontScale)
-            }
+    // MARK: - Formatting
+
+    private func scaled(_ size: CGFloat,
+                        _ weight: Font.Weight = .regular,
+                        _ design: Font.Design = .default) -> Font {
+        .system(size: size * fontScale, weight: weight, design: design)
+    }
+
+    private func compact(_ tokens: Int) -> String {
+        tokens >= 1000 ? String(format: "%.0fk", Double(tokens) / 1000) : "\(tokens)"
+    }
+
+    private func age(since date: Date) -> String {
+        let seconds = max(0, now.timeIntervalSince(date))
+        switch seconds {
+        case ..<60: return "\(Int(seconds))s"
+        case ..<3600: return "\(Int(seconds / 60))m"
+        default: return "\(Int(seconds / 3600))h"
         }
-        .padding(6)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(nsColor: StoplightIcon.housingColor))
-        )
+    }
+}
+
+/// An invisible button: no chrome until the pointer is over it, then a soft
+/// highlight and a pointing cursor. Rows with no action stay inert.
+private struct HoverRow<Content: View>: View {
+    let action: (() -> Void)?
+    let hint: String?
+    @ViewBuilder var content: Content
+
+    @State private var isHovering = false
+
+    private var isInteractive: Bool { action != nil }
+
+    var body: some View {
+        content
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(isHovering && isInteractive ? 0.10 : 0))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .onHover { hovering in
+                guard isInteractive else { return }
+                isHovering = hovering
+                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
+            .onTapGesture { action?() }
+            .help(hint ?? "")
     }
 }

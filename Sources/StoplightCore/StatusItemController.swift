@@ -39,6 +39,7 @@ public final class StatusItemController: NSObject {
     /// Watches the pointer while the panel is up, so moving from the icon onto the
     /// panel keeps it open and moving away anywhere else closes it.
     private var mouseMonitor: Any?
+    private var hoverHost: NSHostingView<PopoverView>?
     /// Fires exactly when the next just-finished session stops counting as
     /// attention. A one-shot rather than a poll, so idle cost stays at zero.
     private var decayTask: Task<Void, Never>?
@@ -61,6 +62,7 @@ public final class StatusItemController: NSObject {
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false     // rows are clickable
+        panel.acceptsMouseMovedEvents = true // and SwiftUI needs these for .onHover
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         return panel
     }()
@@ -217,25 +219,45 @@ public final class StatusItemController: NSObject {
 
     private func layoutHoverPanel() {
         guard let button = statusItem.button, let window = button.window else { return }
-        let host = NSHostingView(rootView: PopoverView(
+        let content = PopoverView(
             state: state,
             sessions: watcher.sessions,
             casualties: watcher.casualties,
             snapshots: watcher.snapshots,
             now: Date(),
             fontScale: settings.fontScale.factor,
-            onSelect: { [weak self] session in
-                SessionFocus.focus(sessionPid: session.pid)
-                self?.hideHoverPanel()
-            }))
+            onSelect: { [weak self] session in self?.focus(session) })
+
+        // Reuse the hosting view rather than rebuilding it: a fresh one on every
+        // state change would drop the row the pointer is currently over.
+        let host: NSHostingView<PopoverView>
+        if let existing = hoverHost {
+            existing.rootView = content
+            host = existing
+        } else {
+            host = NSHostingView(rootView: content)
+            hoverHost = host
+            hoverPanel.contentView = host
+        }
         host.layout()
+        hoverPanel.setContentSize(host.fittingSize)
         let size = host.fittingSize
-        hoverPanel.contentView = host
-        hoverPanel.setContentSize(size)
 
         let onScreen = window.convertToScreen(button.convert(button.bounds, to: nil))
         hoverPanel.setFrameOrigin(NSPoint(x: onScreen.midX - size.width / 2,
                                           y: onScreen.minY - size.height - 6))
+    }
+
+    /// Clicking a session raises its terminal. Matching the exact window needs
+    /// Accessibility access, so ask for it here — at the moment the user asked for
+    /// something that needs it — rather than nagging at launch.
+    private func focus(_ session: Session) {
+        hideHoverPanel()
+        let title = watcher.snapshots[session.sessionId]?.aiTitle
+        if case .needsAccessibility = SessionFocus.focus(
+            session: session, titles: [title].compactMap { $0 }) {
+            SessionFocus.requestAccessibility()
+        }
     }
 
     // MARK: - Click
@@ -250,10 +272,6 @@ public final class StatusItemController: NSObject {
                           in: button)
     }
 
-    @objc private func focusSession(_ item: NSMenuItem) {
-        guard let pid = item.representedObject as? pid_t else { return }
-        SessionFocus.focus(sessionPid: pid)
-    }
 
     @objc private func showSettings() {
         settingsWindow.show()
@@ -275,17 +293,6 @@ public final class StatusItemController: NSObject {
         menu.addItem(header)
         menu.addItem(.separator())
 
-        for session in watcher.sessions {
-            let owner = SessionFocus.name(forSessionPid: session.pid)
-            let item = NSMenuItem(
-                title: owner.map { "\(session.folder) — \($0)" } ?? session.folder,
-                action: #selector(focusSession(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = session.pid
-            item.isEnabled = owner != nil
-            menu.addItem(item)
-        }
-        if !watcher.sessions.isEmpty { menu.addItem(.separator()) }
 
         if !watcher.casualties.isEmpty {
             let count = watcher.casualties.count

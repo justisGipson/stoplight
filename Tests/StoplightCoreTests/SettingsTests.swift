@@ -147,3 +147,28 @@ private func settingsFile(_ contents: String) throws -> URL {
     // launchd is pid 1 and owns no application.
     #expect(SessionFocus.owningApplication(of: 1) == nil)
 }
+
+// MARK: - Window matching
+
+@Test func aWindowTitleMatchesTheSessionFolder() {
+    #expect(SessionFocus.matches("stoplight — zsh", any: ["stoplight-df", "stoplight"]))
+}
+
+@Test func aWindowTitleMatchesTheSessionName() {
+    // Claude Code sets the tab title itself, so the session's own name is the
+    // strongest thing to match on.
+    #expect(SessionFocus.matches("stoplight-df", any: ["stoplight-df", "stoplight"]))
+}
+
+@Test func matchingIsCaseInsensitive() {
+    #expect(SessionFocus.matches("STOPLIGHT — zsh", any: ["stoplight"]))
+}
+
+@Test func anUnrelatedWindowDoesNotMatch() {
+    #expect(SessionFocus.matches("Safari — Anthropic", any: ["stoplight", "stoplight-df"]) == false)
+}
+
+@Test func emptyTargetsNeverMatch() {
+    // A session with no name and no cwd must not grab the first window it sees.
+    #expect(SessionFocus.matches("anything at all", any: ["", ""]) == false)
+}

@@ -8,9 +8,13 @@ public struct TranscriptSnapshot: Equatable, Sendable {
     public var contextTokens: Int?
     public var lastErrorStatus: Int?
     public var lastErrorAt: Date?
+    /// Claude Code's generated topic title. This is what the terminal tab and
+    /// window are actually named, so it is the only reliable thing to match a
+    /// window against.
+    public var aiTitle: String?
 
     public var isEmpty: Bool {
-        currentTool == nil && contextTokens == nil && lastErrorStatus == nil
+        currentTool == nil && contextTokens == nil && lastErrorStatus == nil && aiTitle == nil
     }
 
     /// An API error only matters while it is fresh. A 429 from three hours ago in
@@ -65,6 +69,10 @@ public enum TranscriptReader {
             guard let object = try? JSONSerialization.jsonObject(with: line),
                   let json = object as? [String: Any] else { continue }
 
+            if snapshot.aiTitle == nil, let title = json["aiTitle"] as? String, !title.isEmpty {
+                snapshot.aiTitle = title
+            }
+
             if snapshot.lastErrorStatus == nil, json["isApiErrorMessage"] as? Bool == true {
                 snapshot.lastErrorStatus = json["apiErrorStatus"] as? Int ?? 0
                 snapshot.lastErrorAt = date(json["timestamp"] as? String)
@@ -99,7 +107,8 @@ public enum TranscriptReader {
                 }
             }
 
-            if resolvedTool, snapshot.contextTokens != nil, snapshot.lastErrorStatus != nil { break }
+            if resolvedTool, snapshot.contextTokens != nil,
+               snapshot.lastErrorStatus != nil, snapshot.aiTitle != nil { break }
         }
         return snapshot
     }

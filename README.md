@@ -161,6 +161,42 @@ SQLite. The design originally called for SQLite; the actual shape is one entry p
 transcript, read whole and written whole, with no query beyond summing. SQLite
 would have added a C API, a schema and migrations to buy indexing nothing needs.
 
+## Clicking a session
+
+Rows in the hover panel are clickable. What that can do depends entirely on the
+terminal, and the ceiling is lower than it sounds.
+
+**Raising the app always works**, needs no permission, and is what
+`NSRunningApplication.activate()` does: make the app frontmost, raise its
+frontmost window, give it keyboard focus. It has no notion of *which* window or
+tab — so if one terminal window holds several sessions, you get that window
+showing whichever tab was already active.
+
+**Choosing between windows works** when the terminal has more than one, via the
+Accessibility API. Matching is on Claude Code's generated topic title, because
+that is what ends up in the title bar — the folder and the session name never
+appear there. macOS asks for Accessibility consent the first time you click a row.
+
+**Choosing a tab does not work in Ghostty, and cannot be made to.** Measured with
+`./Stoplight.app/Contents/MacOS/Stoplight --diagnose`: Ghostty exposes one
+`AXWindow` whose entire subtree is `AXGroup → AXGroup → AXStaticText`, and its
+Window menu offers only "Show Previous Tab" / "Show Next Tab" — no per-tab items.
+There is no addressable handle for a tab anywhere.
+
+Other terminals are better equipped, not worse:
+
+| Terminal | Tab targeting |
+|---|---|
+| iTerm2 | AppleScript, precise (needs Automation consent) |
+| Terminal.app | AppleScript, precise (needs Automation consent) |
+| kitty | `kitty @ focus-window` (needs `allow_remote_control`) |
+| WezTerm | `wezterm cli activate-pane` |
+| Ghostty, Alacritty | app and window only |
+
+None of that is implemented yet — the current behaviour is app + window for every
+terminal. `--diagnose` prints the accessibility tree and menus for whatever
+terminals are running Claude, which is how to check a new one.
+
 ## Known constraints
 
 **The lamps are small: about 5.6px on a 24pt menu bar, 4.9px on a 22pt one.**
