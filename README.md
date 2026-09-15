@@ -123,8 +123,27 @@ so that installing Xcode later does not break it.
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `.github/workflows/test.yml` | push to `main`, pull requests | builds and runs the suite |
-| `.github/workflows/release.yml` | a `v*` tag, or run by hand | tests, builds, packages, publishes |
+| `test.yml` | push to `main`, pull requests | builds and runs the suite |
+| `release-pr.yml` | push to `main` | opens/updates the release PR |
+| `release.yml` | the release PR merging, a `v*` tag, or by hand | tags, builds, packages, publishes |
+
+### Releasing
+
+Push to `main` as usual — nothing is published. A bot keeps one **`release vX.Y.Z`**
+pull request open, accumulating every commit since the last release into a
+changelog and bumping `VERSION`. Merge it and the release goes out.
+
+The version increments on its own and does **not** require Conventional Commits:
+patch by default, minor if any commit since the last release mentions `feat`, major
+on `BREAKING` or `!:`. Write commits however you like and the numbers still move.
+
+Tagging by hand still works (`git tag -a v1.2.3 && git push origin v1.2.3`), as does
+running the release workflow manually, which uploads an artifact and publishes
+nothing.
+
+One structural note: tagging happens *inside* `release.yml` rather than in its own
+workflow, because a tag pushed with `GITHUB_TOKEN` does not trigger other
+workflows. Tag and build have to share a run.
 
 The release workflow stamps the tag into `CFBundleShortVersionString` *before*
 building — `build.sh` signs the bundle as its last step, so editing the plist
@@ -132,12 +151,6 @@ afterwards would invalidate that signature. It packages with `ditto` rather than
 `zip`, which preserves the bundle's symlinks, permissions and extended attributes,
 and publishes the zip plus a SHA-256 alongside it. Running it by hand (without a
 tag) uploads a build artifact and publishes nothing.
-
-Tag a release with:
-
-```sh
-git tag v0.1.0 && git push origin v0.1.0
-```
 
 ## Layout
 

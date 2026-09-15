@@ -1,7 +1,9 @@
 name: release
 
 on:
+  # Merging the release PR lands a VERSION bump on main; that is the ship signal.
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
@@ -17,19 +19,50 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Resolve version
         id: version
         run: |
+          set -euo pipefail
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
-          else
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="$(cat VERSION)"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # On a plain push to main this only ships when VERSION names something
+          # not yet tagged — i.e. the release PR just merged. Ordinary commits
+          # leave VERSION alone and fall straight through.
+          if [ "${GITHUB_REF_TYPE}" != "tag" ] \
+             && [ "${{ github.event_name }}" != "workflow_dispatch" ] \
+             && git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "v$VERSION is already tagged — nothing to ship"
+            echo "ship=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ship=true" >> "$GITHUB_OUTPUT"
+          fi
           echo "Building $VERSION"
 
+      - name: Tag the release
+        # Done here rather than in its own workflow on purpose: a tag pushed with
+        # GITHUB_TOKEN does not trigger other workflows, so tagging and building
+        # have to share a run.
+        if: steps.version.outputs.ship == 'true' && github.ref_type != 'tag'
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.version.outputs.version }}" \
+            -m "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
       - name: Stamp the bundle version
+        if: steps.version.outputs.ship == 'true'
         # Done before build.sh, which copies this plist in and then signs the
         # bundle — editing the plist afterwards would invalidate that signature.
         run: |
@@ -41,12 +74,15 @@ jobs:
             Resources/Info.plist
 
       - name: Test before shipping
+        if: steps.version.outputs.ship == 'true'
         run: ./test.sh
 
       - name: Build app
+        if: steps.version.outputs.ship == 'true'
         run: ./build.sh
 
       - name: Package
+        if: steps.version.outputs.ship == 'true'
         # ditto, not zip: it preserves the bundle's symlinks, permissions and
         # extended attributes, which a plain zip mangles.
         run: |
@@ -54,12 +90,14 @@ jobs:
           shasum -a 256 Stoplight.zip | tee Stoplight.zip.sha256
 
       - name: Verify the packaged app
+        if: steps.version.outputs.ship == 'true'
         run: |
           codesign --verify --deep --strict --verbose=2 Stoplight.app
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
             Stoplight.app/Contents/Info.plist
 
       - uses: actions/upload-artifact@v7
+        if: steps.version.outputs.ship == 'true'
         with:
           name: Stoplight-${{ steps.version.outputs.version }}
           path: |
@@ -68,13 +106,14 @@ jobs:
           if-no-files-found: error
 
       - name: Publish release
-        if: github.ref_type == 'tag'
+        if: steps.version.outputs.ship == 'true'
         uses: softprops/action-gh-release@v3
         with:
           files: |
             Stoplight.zip
             Stoplight.zip.sha256
           generate_release_notes: true
+          tag_name: v${{ steps.version.outputs.version }}
           body: |
             ## Install
 

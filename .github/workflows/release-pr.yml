@@ -1,0 +1,110 @@
+name: release pr
+
+# Keeps an open "release vX.Y.Z" PR that accumulates every commit since the last
+# release, with a generated changelog. Merging it ships. Nothing is published
+# until you merge, so pushing to main stays free.
+#
+# Unlike release-please this does not require Conventional Commits: the version
+# auto-increments regardless of how commits are worded. Prefixes only influence
+# how big the bump is.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-pr:
+    # The merge of a release PR must not immediately open another one.
+    if: ${{ !startsWith(github.event.head_commit.message, 'release v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Work out the next version
+        id: next
+        run: |
+          set -euo pipefail
+          LAST="$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)"
+          echo "last release: $LAST"
+
+          RANGE="$LAST..HEAD"
+          [ "$LAST" = "v0.0.0" ] && RANGE="HEAD"
+          SUBJECTS="$(git log --no-merges --pretty=format:'%s' $RANGE)"
+
+          if [ -z "$SUBJECTS" ]; then
+            echo "nothing since $LAST"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST#v}"
+
+          # Default is a patch bump. Wording only decides how far it moves.
+          if grep -qiE 'BREAKING|!:' <<< "$SUBJECTS"; then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          elif grep -qiE '\bfeat' <<< "$SUBJECTS"; then
+            MINOR=$((MINOR + 1)); PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+
+          VERSION="$MAJOR.$MINOR.$PATCH"
+          echo "next version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## v$VERSION"
+            echo
+            git log --no-merges --pretty=format:'- %s (%h)' $RANGE
+            echo
+          } > /tmp/section.md
+
+      - name: Update the release branch
+        if: steps.next.outputs.changed == 'true'
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -B release/next
+          echo "$VERSION" > VERSION
+
+          touch CHANGELOG.md
+          cat /tmp/section.md CHANGELOG.md > /tmp/CHANGELOG.md
+          mv /tmp/CHANGELOG.md CHANGELOG.md
+
+          git add VERSION CHANGELOG.md
+          git commit -m "release v$VERSION"
+          git push --force origin release/next
+
+      - name: Open or update the PR
+        if: steps.next.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          set -euo pipefail
+          BODY="Merging this publishes **v$VERSION**.
+
+          $(cat /tmp/section.md)
+
+          ---
+          Opened automatically. Push more to \`main\` and this PR and its version
+          will update themselves."
+
+          if gh pr view release/next --json number >/dev/null 2>&1; then
+            gh pr edit release/next --title "release v$VERSION" --body "$BODY"
+          else
+            gh pr create --base main --head release/next \
+              --title "release v$VERSION" --body "$BODY"
+          fi
