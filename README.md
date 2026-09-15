@@ -17,7 +17,8 @@ All three lamps are always drawn — unlit ones are dimmed rather than hidden �
 "which lamp is on" reads as brightness at a fixed slot and never depends on being
 able to distinguish hue.
 
-Hovering rotates the icon upright (red on top) and opens a detail panel. Clicking
+The icon is an upright housing with red on top, laid out natively at menu bar size.
+Hovering opens a detail panel carrying a second, much larger stoplight. Clicking
 opens the menu.
 
 ## Status
@@ -27,9 +28,9 @@ opens the menu.
 What works today:
 
 - Menu bar icon, drawn with Core Graphics, adapts to light/dark menu bars
-- Hover → 90° rotation + detail panel, with a 0.22s hover-intent delay
+- Hover → detail panel, after a 0.22s hover-intent delay
 - Click → menu
-- 20 passing tests
+- 22 passing tests
 
 What does not exist yet: **any real session monitoring.** The lamp counts are
 hardcoded. Use *Cycle demo state* in the menu to walk the six lamp permutations
@@ -112,16 +113,15 @@ a future version degrades to "unknown" instead of crashing.
 
 ## Known constraints
 
-**The upright lamps are small.** The horizontal strip is 36.5px long but the menu
-bar is only 22–24pt tall, so rotating upright must scale to ~0.6×, taking the
-lamps from 8.5px to about 5px. That is geometry, not a bug. It is why the hover
-panel contains a second, full-size stoplight — the menu bar icon signals, the
-panel is what you actually read.
+**The lamps are small: about 5.6px on a 24pt menu bar, 4.9px on a 22pt one.**
+Three lamps stacked vertically inside ~22px leaves no more room than that. The
+layout is solved for the bar height rather than scaled down to it, so they at
+least stay crisp. It is also why the hover panel carries a second, full-size
+stoplight — the menu bar icon signals, the panel is what you actually read.
 
-**Neighbouring menu bar icons shift during the rotation.** The status item narrows
-from 36.5px to ~9px as it turns. The alternative — a fixed-width canvas — leaves
-the upright form stranded in ~28px of dead space. Changing sides is a one-line
-edit in `StoplightIcon.canvasWidth(at:barHeight:)`.
+A horizontal arrangement would afford ~8.5px lamps, which is meaningfully more
+legible but reads as three loose dots rather than a stoplight. That trade was made
+deliberately in favour of the stoplight.
 
 ## Development notes
 
@@ -142,6 +142,13 @@ non-activating panel renders without ever taking focus.
 
 **No `toolTip` on the button.** AppKit owns tooltips and its tooltip wins over the
 panel.
+
+**The icon deliberately does not animate.** An earlier version drew it horizontally
+and rotated it upright on hover. Because the artwork's bounding box changes as it
+turns, every frame resized the `NSStatusItem`, and AppKit relayouts the whole menu
+bar whenever that happens — visibly choppy, and it shoved neighbouring icons
+around. Drawing it upright from the start removed the animation, the per-frame
+relayout and the downscaling blur together.
 
 ## Roadmap
 

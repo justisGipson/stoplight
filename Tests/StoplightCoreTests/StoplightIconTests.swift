@@ -5,38 +5,60 @@ import AppKit
 /// Fixed height so the geometry never depends on the window server.
 private let bar: CGFloat = 24
 
-@Test func horizontalOrientationDrawsAtFullScale() {
-    #expect(StoplightIcon.scale(at: 0, barHeight: bar) == 1)
+// MARK: - Layout
+
+@Test func housingFitsInsideTheMenuBar() {
+    #expect(StoplightIcon.housingHeight(barHeight: bar) <= bar)
+    #expect(StoplightIcon.housingHeight(barHeight: bar) == bar - StoplightIcon.inset * 2)
 }
 
-@Test func uprightOrientationShrinksToFitTheMenuBar() {
-    let s = StoplightIcon.scale(at: .pi / 2, barHeight: bar)
-    #expect(s < 1)
-    // Upright, the strip's long axis is exactly the bar height.
-    #expect(abs(StoplightIcon.stripLength * s - bar) < 0.001)
+@Test func threeLampsPlusGapsAndPaddingExactlyFillTheHousing() {
+    // The layout is solved for the bar height rather than scaled to it, so this
+    // has to balance exactly — any slop shows up as a lopsided housing.
+    let d = StoplightIcon.diameter(barHeight: bar)
+    let used = d * 3 + StoplightIcon.gap * 2 + StoplightIcon.padding * 2
+    #expect(abs(used - StoplightIcon.housingHeight(barHeight: bar)) < 0.0001)
 }
 
-@Test func rotationNeverClipsAtAnyAngle() {
-    // The invariant that keeps the animation from being cut off partway through
-    // the turn, where the diagonal extent is larger than either endpoint.
-    for step in 0...100 {
-        let turn = CGFloat(step) / 100
-        let angle = StoplightIcon.angle(forTurn: turn)
-        let height = StoplightIcon.extent(at: angle).height
-                   * StoplightIcon.scale(at: angle, barHeight: bar)
-        #expect(height <= bar + 0.001, "clipped at turn \(turn)")
+@Test func lampsAreOrderedRedOnTop() {
+    // Like a real stoplight, and the fixed slot order the readability depends on.
+    let red = StoplightIcon.lampCenterY(.red, barHeight: bar)
+    let yellow = StoplightIcon.lampCenterY(.yellow, barHeight: bar)
+    let green = StoplightIcon.lampCenterY(.green, barHeight: bar)
+    #expect(red > yellow)
+    #expect(yellow > green)
+}
+
+@Test func lampsAreEvenlySpaced() {
+    let red = StoplightIcon.lampCenterY(.red, barHeight: bar)
+    let yellow = StoplightIcon.lampCenterY(.yellow, barHeight: bar)
+    let green = StoplightIcon.lampCenterY(.green, barHeight: bar)
+    #expect(abs((red - yellow) - (yellow - green)) < 0.0001)
+}
+
+@Test func everyLampStaysInsideTheHousing() {
+    let d = StoplightIcon.diameter(barHeight: bar)
+    let top = bar - StoplightIcon.inset
+    let bottom = StoplightIcon.inset
+    for lamp in Lamp.allCases {
+        let centre = StoplightIcon.lampCenterY(lamp, barHeight: bar)
+        #expect(centre + d / 2 <= top + 0.0001, "\(lamp) overflows the top")
+        #expect(centre - d / 2 >= bottom - 0.0001, "\(lamp) overflows the bottom")
     }
 }
 
-@Test func uprightIsNarrowerThanHorizontal() {
-    #expect(StoplightIcon.canvasWidth(at: .pi / 2, barHeight: bar)
-          < StoplightIcon.canvasWidth(at: 0, barHeight: bar))
+@Test func canvasIsWideEnoughForALampPlusItsPadding() {
+    #expect(StoplightIcon.canvasWidth(barHeight: bar)
+            == StoplightIcon.diameter(barHeight: bar) + StoplightIcon.padding * 2)
 }
 
-@Test func turnIsClampedToItsEndpoints() {
-    #expect(StoplightIcon.angle(forTurn: -5) == 0)
-    #expect(StoplightIcon.angle(forTurn: 5) == .pi / 2)
-    #expect(StoplightIcon.angle(forTurn: 0) == 0)
+@Test func layoutStaysValidAcrossPlausibleMenuBarHeights() {
+    // The bar is 22pt on older displays and 24pt on current ones, and notched
+    // displays report more again.
+    for height in stride(from: CGFloat(18), through: CGFloat(40), by: CGFloat(0.5)) {
+        #expect(StoplightIcon.diameter(barHeight: height) > 0, "degenerate at \(height)")
+        #expect(StoplightIcon.canvasWidth(barHeight: height) > 0, "degenerate at \(height)")
+    }
 }
 
 // MARK: - Rendering
@@ -47,8 +69,8 @@ private struct Energy { var r = 0.0, g = 0.0, b = 0.0, maxAlpha = 0.0 }
 /// sampled pixels: the result is independent of backing scale and of where in the
 /// canvas a lamp happens to land, so it survives layout tweaks.
 @MainActor
-private func render(_ state: LightState, turn: CGFloat = 0) -> Energy {
-    let w = 64, h = 24, count = w * h * 4
+private func render(_ state: LightState) -> Energy {
+    let w = 16, h = 24, count = w * h * 4
     let bytes = UnsafeMutableRawPointer.allocate(byteCount: count, alignment: 8)
     defer { bytes.deallocate() }
     bytes.initializeMemory(as: UInt8.self, repeating: 0, count: count)
@@ -59,8 +81,7 @@ private func render(_ state: LightState, turn: CGFloat = 0) -> Energy {
 
     // Pin the appearance: housing and unlit lamps derive from labelColor.
     NSAppearance(named: .darkAqua)!.performAsCurrentDrawingAppearance {
-        StoplightIcon.draw(state, turn: turn, in: ctx,
-                           size: CGSize(width: CGFloat(w), height: CGFloat(h)))
+        StoplightIcon.draw(state, in: ctx, size: CGSize(width: CGFloat(w), height: CGFloat(h)))
     }
 
     let px = bytes.assumingMemoryBound(to: UInt8.self)
@@ -97,13 +118,13 @@ private func render(_ state: LightState, turn: CGFloat = 0) -> Energy {
     #expect(dark.maxAlpha >= unlitAlpha * 0.85)
 }
 
-@Test @MainActor func imageMatchesComputedCanvasWidth() {
-    let image = StoplightIcon.image(for: LightState(running: 1), turn: 0)
-    #expect(abs(image.size.width - StoplightIcon.canvasWidth(at: 0)) < 0.001)
+@Test @MainActor func imageMatchesTheComputedCanvas() {
+    let image = StoplightIcon.image(for: LightState(running: 1))
+    #expect(image.size.width == StoplightIcon.canvasWidth())
     #expect(image.size.height == StoplightIcon.barHeight)
 }
 
 @Test @MainActor func iconIsNeverRenderedAsATemplate() {
     // Template images get recoloured by AppKit, which would erase the signal.
-    #expect(StoplightIcon.image(for: LightState(running: 1), turn: 0).isTemplate == false)
+    #expect(StoplightIcon.image(for: LightState(running: 1)).isTemplate == false)
 }

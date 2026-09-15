@@ -13,6 +13,11 @@ import QuartzCore
 /// background `.accessory` app needs the app activated to display reliably, and
 /// activating on hover would pull focus off whatever you were typing in. A
 /// non-activating panel renders without ever taking focus.
+///
+/// The icon itself is static. An earlier version rotated it upright on hover,
+/// which meant resizing the status item every frame and dragging AppKit through a
+/// full menu bar layout each time — visibly choppy. Drawing it upright to begin
+/// with removes the animation, the resizing and the scaling blur all at once.
 @MainActor
 public final class StatusItemController: NSObject {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -20,14 +25,10 @@ public final class StatusItemController: NSObject {
     private var hoverTask: Task<Void, Never>?
     private var appearanceObserver: NSKeyValueObservation?
 
-    /// 0 = horizontal, 1 = upright with red on top.
-    private var turn: CGFloat = 0
-    private var turnTask: Task<Void, Never>?
 
     /// Delay before hover engages, so sweeping across the menu bar on the way to
     /// something else doesn't set the whole thing spinning.
     private let hoverIntent: TimeInterval = 0.22
-    private let turnDuration: TimeInterval = 0.26
 
     private var state = LightState(failed: 0, attention: 1, running: 2) {
         didSet { if state != oldValue { render() } }
@@ -66,6 +67,7 @@ public final class StatusItemController: NSObject {
             button.target = self
             button.action = #selector(buttonClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            installTrackingArea(on: button)
         }
 
         // The menu bar flips light/dark independently of the app; the housing and
@@ -80,12 +82,10 @@ public final class StatusItemController: NSObject {
     // MARK: - Rendering
 
     private func render() {
-        guard let button = statusItem.button else { return }
-        button.image = StoplightIcon.image(for: state, turn: turn)
+        statusItem.button?.image = StoplightIcon.image(for: state)
         // No toolTip: it competes with the hover panel and wins, because AppKit
         // owns it. The panel is the tooltip.
-        button.setAccessibilityLabel("Stoplight: \(state.summary)")
-        installTrackingArea(on: button)
+        statusItem.button?.setAccessibilityLabel("Stoplight: \(state.summary)")
         if hoverPanel.isVisible { layoutHoverPanel() }
     }
 
@@ -108,7 +108,7 @@ public final class StatusItemController: NSObject {
             guard let self else { return }
             try? await Task.sleep(for: .seconds(self.hoverIntent))
             guard !Task.isCancelled else { return }
-            self.animateTurn(to: 1) { self.showHoverPanel() }
+            self.showHoverPanel()
         }
     }
 
@@ -116,7 +116,6 @@ public final class StatusItemController: NSObject {
         hoverTask?.cancel()
         hoverTask = nil
         hoverPanel.orderOut(nil)
-        animateTurn(to: 0)
     }
 
     private func showHoverPanel() {
@@ -135,37 +134,6 @@ public final class StatusItemController: NSObject {
         let onScreen = window.convertToScreen(button.convert(button.bounds, to: nil))
         hoverPanel.setFrameOrigin(NSPoint(x: onScreen.midX - size.width / 2,
                                           y: onScreen.minY - size.height - 6))
-    }
-
-    // MARK: - Rotation
-
-    /// Driven by a MainActor `Task` rather than a `Timer`: under Swift 6 the timer
-    /// closure is non-isolated, so the timer and completion handler would have to
-    /// cross an isolation boundary on every tick.
-    private func animateTurn(to target: CGFloat, completion: (@MainActor () -> Void)? = nil) {
-        turnTask?.cancel()
-
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            turn = target
-            render()
-            completion?()
-            return
-        }
-
-        let start = turn
-        let began = CACurrentMediaTime()
-        turnTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                let p = min(1, (CACurrentMediaTime() - began) / self.turnDuration)
-                let eased = p < 0.5 ? 2 * p * p : 1 - pow(-2 * p + 2, 2) / 2
-                self.turn = start + (target - start) * CGFloat(eased)
-                self.render()
-                if p >= 1 { break }
-                try? await Task.sleep(for: .milliseconds(16))
-            }
-            if !Task.isCancelled { completion?() }
-        }
     }
 
     // MARK: - Click
