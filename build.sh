@@ -13,6 +13,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp ".build/$CONFIG/Stoplight" "$APP/Contents/MacOS/Stoplight"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/Stoplight.icns "$APP/Contents/Resources/Stoplight.icns"
 
 # Ad-hoc signature: unsigned bundles get killed on launch on Apple Silicon.
 codesign --force --sign - "$APP" >/dev/null 2>&1 || echo "warning: codesign failed"

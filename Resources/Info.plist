@@ -6,6 +6,8 @@
     <string>Stoplight</string>
     <key>CFBundleDisplayName</key>
     <string>Stoplight</string>
+    <key>CFBundleIconFile</key>
+    <string>Stoplight</string>
     <key>CFBundleIdentifier</key>
     <string>com.justis.stoplight</string>
     <key>CFBundleExecutable</key>
