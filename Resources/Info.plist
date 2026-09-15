@@ -7,7 +7,7 @@
     <key>CFBundleDisplayName</key>
     <string>Stoplight</string>
     <key>CFBundleIdentifier</key>
-    <string>com.booknook.stoplight</string>
+    <string>com.justis.stoplight</string>
     <key>CFBundleExecutable</key>
     <string>Stoplight</string>
     <key>CFBundlePackageType</key>
