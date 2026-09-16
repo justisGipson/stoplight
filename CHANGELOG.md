@@ -1,3 +1,6 @@
+## v0.2.3
+
+- release v0.2.2 (65f679e)
 ## v0.2.2
 
 - release v0.2.2 (ecdfafe)
